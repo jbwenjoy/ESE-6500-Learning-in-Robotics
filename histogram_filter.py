@@ -25,7 +25,7 @@ class HistogramFilter(object):
         num_states = n * m  # 20 * 20 = 400
         num_actions = 4  # L, U, R, D
         num_colors = 2  # 0, 1
-        K = observation.shape[0]  # 30
+        # K = observation.shape[0]  # 30
 
         # cmap_flat = np.array(cmap).flatten()  # 400
 
@@ -33,30 +33,49 @@ class HistogramFilter(object):
         new_belief = np.zeros_like(belief)
         for i in range(n):
             for j in range(m):
-                if action == [0, 1]:  # up
-                    # corners
-                    if i == 0 and j == 0:  # top left
-                        new_belief[i][j] = 0.1 * belief[i][j] + 0.9 * 0.25 * 2 * belief[i][j] + 0.9 * 0.25 * belief[i][j + 1] + 0.9 * 0.25 * belief[i + 1][j]
-                    elif i == 0 and j == m - 1:  # top right
-                        new_belief[i][j] = 0.1 * belief[i][j] + 0.9 * 0.25 * 2 * belief[i][j] + 0.9 * 0.25 * belief[i][j - 1] + 0.9 * 0.25 * belief[i + 1][j]
-                    elif i == n - 1 and j == 0:  # bottom left
-                        new_belief[i][j] = 0.1 * belief[i][j] + 0.9 * 0.25 * 2 * belief[i][j] + 0.9 * 0.25 * belief[i][j + 1] + 0.9 * 0.25 * belief[i - 1][j]
-                    elif i == n - 1 and j == m - 1:  # bottom right
-                        new_belief[i][j] = 0.1 * belief[i][j] + 0.9 * 0.25 * 2 * belief[i][j] + 0.9 * 0.25 * belief[i][j - 1] + 0.9 * 0.25 * belief[i - 1][j]
-                    # edges
-                    elif i == 0:  # top
-                        new_belief[i][j] = 0.1 * belief[i][j] + 0.9 * 0.25 * belief[i][j] + 0.9 * 0.25 * belief[i][j - 1] + 0.9 * 0.25 * belief[i][j + 1] + 0.9 * 0.25 * belief[i + 1][j]
+                if action[0] == 0 and action[1] == 1:  # up
+                    if i == 0:  # top
+                        new_belief[i][j] = belief[i][j] + 0.9 * belief[i + 1][j]
                     elif i == n - 1:  # bottom
-                        new_belief[i][j] = 0.1 * belief[i][j] + 0.9 * 0.25 * belief[i][j] + 0.9 * 0.25 * belief[i][j - 1] + 0.9 * 0.25 * belief[i][j + 1] + 0.9 * 0.25 * belief[i - 1][j]
-                    elif j == 0:  # left
-                        new_belief[i][j] = 0.1 * belief[i][j] + 0.9 * 0.25 * belief[i][j] + 0.9 * 0.25 * belief[i - 1][j] + 0.9 * 0.25 * belief[i + 1][j] + 0.9 * 0.25 * belief[i][j + 1]
-                    elif j == m - 1:  # right
-                        new_belief[i][j] = 0.1 * belief[i][j] + 0.9 * 0.25 * belief[i][j] + 0.9 * 0.25 * belief[i - 1][j] + 0.9 * 0.25 * belief[i + 1][j] + 0.9 * 0.25 * belief[i][j - 1]
-                    # internal
-                    else:
-                        new_belief[i][j] = 0.1 * belief[i][j] + 0.9 * 0.25 * belief[i - 1][j] + 0.9 * 0.25 * belief[i + 1][j] + 0.9 * 0.25 * belief[i][j - 1] + 0.9 * 0.25 * belief[i][j + 1]
+                        new_belief[i][j] = 0.1 * belief[i][j]
+                    else:  # other
+                        new_belief[i][j] = 0.1 * belief[i][j] + 0.9 * belief[i + 1][j]
+                if action[0] == 0 and action[1] == -1:  # down
+                    if i == n - 1:  # bottom
+                        new_belief[i][j] = belief[i][j] + 0.9 * belief[i - 1][j]
+                    elif i == 0:  # top
+                        new_belief[i][j] = 0.1 * belief[i][j]
+                    else:  # other
+                        new_belief[i][j] = 0.1 * belief[i][j] + 0.9 * belief[i - 1][j]
+                if action[0] == 1 and action[1] == 0:  # right
+                    if j == m - 1:  # right edge
+                        new_belief[i][j] = belief[i][j] + 0.9 * belief[i][j - 1]
+                    elif j == 0:  # left edge
+                        new_belief[i][j] = 0.1 * belief[i][j]
+                    else:  # other
+                        new_belief[i][j] = 0.1 * belief[i][j] + 0.9 * belief[i][j - 1]
+                if action[0] == -1 and action[1] == 0:  # left
+                    if j == 0:  # left edge
+                        new_belief[i][j] = belief[i][j] + 0.9 * belief[i][j + 1]
+                    elif j == m - 1:  # right edge
+                        new_belief[i][j] = 0.1 * belief[i][j]
+                    else:  # other
+                        new_belief[i][j] = 0.1 * belief[i][j] + 0.9 * belief[i][j + 1]
 
         # Update belief after sensing
+        # P(color = observation | state = i) = 0.9 if the true is the same as sensed, and 0.1 otherwise.
+        obs = np.zeros((n, m))
+        for i in range(n):
+            for j in range(m):
+                if observation == cmap[i][j]:
+                    obs[i][j] = 0.9
+                else:
+                    obs[i][j] = 0.1
+        new_belief = obs * new_belief
+
+        # Normalize the belief
+        sum_belief = np.sum(new_belief)
+        new_belief = new_belief / sum_belief
 
 
         '''
@@ -142,3 +161,4 @@ class HistogramFilter(object):
         #
         # result_k = eta * alpha_k
 
+        return new_belief
