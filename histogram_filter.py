@@ -162,3 +162,52 @@ class HistogramFilter(object):
         # result_k = eta * alpha_k
 
         return new_belief
+
+    def histogram_filter2(self, cmap, belief, action, observation):
+        cmap = np.array(cmap)
+        action = np.array(action)
+        num_rows, num_cols = cmap.shape
+        go = 0.9
+        stay = 0.1
+        next = np.zeros_like(belief)
+        for i in range(num_rows):
+            for j in range(num_cols):
+                if (action == np.array([0, 1])).all():
+                    if i == 0:
+                        next[i, j] = belief[i, j] + go * belief[i + 1, j]
+                    elif i == num_rows - 1:
+                        next[i, j] = stay * belief[i, j]
+                    else:
+                        next[i, j] = stay * belief[i, j] + go * belief[i + 1, j]
+                elif (action == np.array([0, -1])).all():
+                    if i == num_rows - 1:
+                        next[i, j] = belief[i, j] + go * belief[i - 1, j]
+                    elif i == 0:
+                        next[i, j] = stay * belief[i, j]
+                    else:
+                        next[i, j] = stay * belief[i, j] + go * belief[i - 1, j]
+                elif (action == np.array([1, 0])).all():
+                    if j == num_cols - 1:
+                        next[i, j] = belief[i, j] + go * belief[i, j - 1]
+                    elif j == 0:
+                        next[i, j] = stay * belief[i, j]
+                    else:
+                        next[i, j] = stay * belief[i, j] + go * belief[i, j - 1]
+                else:
+                    if j == 0:
+                        next[i, j] = belief[i, j] + go * belief[i, j + 1]
+                    elif j == num_cols - 1:
+                        next[i, j] = stay * belief[i, j]
+                    else:
+                        next[i, j] = stay * belief[i, j] + go * belief[i, j + 1]
+        o = np.zeros((num_rows, num_cols))
+        for i in range(num_rows):
+            for j in range(num_cols):
+                if observation == cmap[i, j]:
+                    o[i, j] = go
+                else:
+                    o[i, j] = stay
+        next *= next
+        sum_belief = np.sum(next)
+        next /= sum_belief
+        return next
