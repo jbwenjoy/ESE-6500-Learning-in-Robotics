@@ -40,21 +40,22 @@ class HistogramFilter(object):
                         new_belief[i][j] = 0.1 * belief[i][j]
                     else:  # other
                         new_belief[i][j] = 0.1 * belief[i][j] + 0.9 * belief[i + 1][j]
-                if action[0] == 0 and action[1] == -1:  # down
+                elif action[0] == 0 and action[1] == -1:  # down
                     if i == n - 1:  # bottom
                         new_belief[i][j] = belief[i][j] + 0.9 * belief[i - 1][j]
                     elif i == 0:  # top
                         new_belief[i][j] = 0.1 * belief[i][j]
                     else:  # other
                         new_belief[i][j] = 0.1 * belief[i][j] + 0.9 * belief[i - 1][j]
-                if action[0] == 1 and action[1] == 0:  # right
+                elif action[0] == 1 and action[1] == 0:  # right
                     if j == m - 1:  # right edge
                         new_belief[i][j] = belief[i][j] + 0.9 * belief[i][j - 1]
                     elif j == 0:  # left edge
                         new_belief[i][j] = 0.1 * belief[i][j]
                     else:  # other
                         new_belief[i][j] = 0.1 * belief[i][j] + 0.9 * belief[i][j - 1]
-                if action[0] == -1 and action[1] == 0:  # left
+                # if action[0] == -1 and action[1] == 0:  # left
+                else:
                     if j == 0:  # left edge
                         new_belief[i][j] = belief[i][j] + 0.9 * belief[i][j + 1]
                     elif j == m - 1:  # right edge
@@ -172,12 +173,12 @@ class HistogramFilter(object):
         next = np.zeros_like(belief)
         for i in range(num_rows):
             for j in range(num_cols):
-                if (action == np.array([0, 1])).all():
-                    if i == 0:
+                if (action == np.array([0, 1])).all():  # move up
+                    if i == 0:  # top
                         next[i, j] = belief[i, j] + go * belief[i + 1, j]
-                    elif i == num_rows - 1:
+                    elif i == num_rows - 1:  # bottom
                         next[i, j] = stay * belief[i, j]
-                    else:
+                    else:  # other
                         next[i, j] = stay * belief[i, j] + go * belief[i + 1, j]
                 elif (action == np.array([0, -1])).all():
                     if i == num_rows - 1:
