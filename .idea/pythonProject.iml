@@ -6,6 +6,8 @@
       <excludeFolder url="file://$MODULE_DIR$/python_venv/.venv/Lib" />
       <excludeFolder url="file://$MODULE_DIR$/python_venv/.venv/Scripts" />
       <excludeFolder url="file://$MODULE_DIR$/python_venv/.venv/share" />
+      <excludeFolder url="file://$MODULE_DIR$/.tmp.driveupload" />
+      <excludeFolder url="file://$MODULE_DIR$/Other" />
     </content>
     <orderEntry type="inheritedJdk" />
     <orderEntry type="sourceFolder" forTests="false" />
