@@ -59,8 +59,8 @@ def sigma_points_gen_and_trans(x_km1, P_km1, Q, dt, i):
 
 def compute_mean_quaternion(q_Sigma_Y_i, q_init):
     # Define GD parameters
-    prev_e_norm = 5
-    thres = 1e-3
+    prev_e_norm = 10
+    thres = 1e-5
 
     e_hat = np.zeros(3)
     q_mean = Quaternion(q_init[0], q_init[1:4])
