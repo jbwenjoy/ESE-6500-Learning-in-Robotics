@@ -8,6 +8,8 @@ class Quaternion:
         self.q[1:4] = vec
 
     def normalize(self):
+        if np.linalg.norm(self.q) == 0:
+            raise ValueError('Quaternion has zero norm')
         self.q = self.q / np.linalg.norm(self.q)
 
     def scalar(self):

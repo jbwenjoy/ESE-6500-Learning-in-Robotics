@@ -17,9 +17,119 @@ def compute_imu_data(raw_data, alpha, beta):
     # returns a 1xN matrix of calibrated data
     return (raw_data - beta) * 3300 / 1023 / alpha
 
+
+def solve_scale_factors(omega, v_prime):
+    # Make sure the length of omega and v_prime are the same
+    # If not the same, use the shorter one
+    if len(omega) > len(v_prime):
+        omega = omega[0:len(v_prime)]
+    if len(v_prime) > len(omega):
+        v_prime = v_prime[0:len(omega)]
+    S = np.sum(omega * v_prime) / np.sum(omega ** 2)
+    return S
+
+
+def sigma_points_gen_and_trans(x_km1, P_km1, Q, dt, i):
+    Sigma_X_i = np.zeros((7, 12))
+    Sigma_Y_i = np.zeros((7, 12))
+    S = np.linalg.cholesky(P_km1 + Q)  # Eq (35)
+    # W_{i,i+n} = columns of (±sqrt(2n)S)
+    W_maker = np.hstack((S, -S))  # To compute set {W_i}
+    q_x = Quaternion(x_km1[0, 0], x_km1[1:4, 0])
+    q_x.normalize()
+    for j in range(12):
+        # Generate sigma points Sigma_X_i
+        # q_W is the quaternion to the first three components of W_i
+        q_W = Quaternion()
+        q_W.from_axis_angle(W_maker[0:3, j])
+        q_X = q_x * q_W  # Eq (34)
+        q_X.normalize()
+        Sigma_X_i[0:4, j] = q_X.q
+        Sigma_X_i[4:7, j] = x_km1[4:7, 0] + W_maker[3:6, j]
+
+        # Transform sigma points
+        q_d = Quaternion()
+        q_d.from_axis_angle(Sigma_X_i[4:7, j] * dt[i])
+        q_Y = q_X * q_d
+        q_Y.normalize()
+        Sigma_Y_i[0:4, j] = q_Y.q
+
+    return Sigma_X_i, Sigma_Y_i
+
+
+def compute_mean_quaternion(q_Sigma_Y_i, q_init):
+    # Define GD parameters
+    prev_e_norm = 5
+    thres = 1e-3
+
+    e_hat = np.zeros(3)
+    q_mean = Quaternion(q_init[0], q_init[1:4])
+    count = 0
+    while np.abs(np.linalg.norm(e_hat) - prev_e_norm) > thres and count < 70:
+        prev_e_norm = np.linalg.norm(e_hat)
+        e_i = np.zeros((3, 12))
+        for i in range(12):
+            q_Sigma_Y_i_i = Quaternion(q_Sigma_Y_i[0, i], q_Sigma_Y_i[1:4, i])
+            q_W = q_Sigma_Y_i_i * q_mean.inv()
+            q_W.normalize()
+            e_i[:, i] = q_W.axis_angle()
+        e_hat = np.mean(e_i, axis=1)
+        q_e = Quaternion()
+        q_e.from_axis_angle(e_hat)
+        q_mean = q_e * q_mean
+        q_mean.normalize()
+        count += 1
+
+    return q_mean
+
+
+def compute_mean_Y(quat_angle_7, q_init):
+    # Eq (38)
+    result = np.zeros((7, 1))
+    # First we need to compute the mean of quaternions, Sigma_Y_i[0:4, :] and Sigma_X_i[0:4, 0]
+    q_mean = compute_mean_quaternion(quat_angle_7[0:4, :], q_init)
+    result[0:4, 0] = q_mean.q
+    result[4:7, 0] = np.mean(quat_angle_7[4:7, :], axis=1)
+    return result
+
+
+def compute_W_residual(Sigma_Y_i, Y_mean):
+    W_residual = np.zeros((6, 12))
+    q_mean = Quaternion(Y_mean[0,0], Y_mean[1:4,0])
+    omega_mean = Y_mean[4:7, 0]
+
+    for i in range(12):
+        q_Sigma_Y_i_i = Quaternion(Sigma_Y_i[0, i], Sigma_Y_i[1:4, i])
+        r_W = q_Sigma_Y_i_i * q_mean.inv()
+        r_W.normalize()
+        r_W = r_W.axis_angle()
+        omega_W = Sigma_Y_i[4:7, i] - omega_mean
+        W_residual[:, i] = np.hstack((r_W, omega_W))
+
+    return W_residual
+
+
+def compute_Y_cov(W_residual):
+    Y_cov = (W_residual @ W_residual.T) / 12
+    return Y_cov
+
+
+def compute_Z(Sigma_Y_i):
+    Z = np.zeros((6, 12))
+    q_gravity = Quaternion(0, [0, 0, 1])  # gravity vector quaternion
+
+    for j in range(12):
+        q_Sigma_Y_i_j = Quaternion(Sigma_Y_i[0, j], Sigma_Y_i[1:4, j])
+        q_mid = q_Sigma_Y_i_j.inv() * q_gravity * q_Sigma_Y_i_j
+        Z[0:3, j] = q_mid.vec()
+        Z[3:6, j] = Sigma_Y_i[4:7, j]
+
+    return Z
+
+
 def estimate_rot(data_num=1):
     # load data
-    imu = io.loadmat('hw2_p2_data/imu/imuRaw' + str(data_num) + '.mat')
+    imu = io.loadmat('imu/imuRaw' + str(data_num) + '.mat')
 
     accel = imu['vals'][0:3, :]
     gyro = imu['vals'][3:6, :]
@@ -27,10 +137,10 @@ def estimate_rot(data_num=1):
 
     ### Your code goes here
 
-    ## IMU Calibration
-
+    # ## IMU Calibration
+    #
     # # Load reference data
-    # vicon = io.loadmat('hw2_p2_data/vicon/viconRot' + str(data_num) + '.mat')  # not needed for autograder
+    # vicon = io.loadmat('vicon/viconRot' + str(data_num) + '.mat')  # not needed for autograder
     # T_vicon = np.shape(vicon['ts'])[1]
     #
     # # Accelerometer
@@ -92,15 +202,15 @@ def estimate_rot(data_num=1):
     # accel_mean = np.mean(accel_calib, axis=1)
     # print("AY down: ")
     # print(accel_mean)
-
-    # By manual calculation, the parameters are as below
-    alpha_ax = 34.9051
-    alpha_ay = (34.5250 + 33.1863) / 2  # 33.85565
-    alpha_az = 34.6828
-    beta_ax = 510.808
-    beta_ay = 500.994
-    beta_az = 499.69
-
+    #
+    # # By manual calculation, the parameters are as below
+    # alpha_ax = 34.9051
+    # alpha_ay = (34.5250 + 33.1863) / 2  # 33.85565
+    # alpha_az = 34.6828
+    # beta_ax = 510.808
+    # beta_ay = 500.994
+    # beta_az = 499.69
+    #
     # # Gyroscope
     # # The magnitude of the angular velocity should be close to 0 when stationary
     #
@@ -137,19 +247,19 @@ def estimate_rot(data_num=1):
     # for i in range(T_vicon - 1):
     #     vicon_roll_diff[i] = (vicon_roll[i + 1] - vicon_roll[i]) / (vicon['ts'][0, i + 1] - vicon['ts'][0, i])
     #     if vicon_roll_diff[i] > 10:
-    #         vicon_roll_diff[i] = 10
+    #         vicon_roll_diff[i] = 0
     #     if vicon_roll_diff[i] < -10:
-    #         vicon_roll_diff[i] = -10
+    #         vicon_roll_diff[i] = 0
     #     vicon_pitch_diff[i] = (vicon_pitch[i + 1] - vicon_pitch[i]) / (vicon['ts'][0, i + 1] - vicon['ts'][0, i])
     #     if vicon_pitch_diff[i] > 10:
-    #         vicon_pitch_diff[i] = 10
+    #         vicon_pitch_diff[i] = 0
     #     if vicon_pitch_diff[i] < -10:
-    #         vicon_pitch_diff[i] = -10
+    #         vicon_pitch_diff[i] = 0
     #     vicon_yaw_diff[i] = (vicon_yaw[i + 1] - vicon_yaw[i]) / (vicon['ts'][0, i + 1] - vicon['ts'][0, i])
     #     if vicon_yaw_diff[i] > 10:
-    #         vicon_yaw_diff[i] = 10
+    #         vicon_yaw_diff[i] = 0
     #     if vicon_yaw_diff[i] < -10:
-    #         vicon_yaw_diff[i] = -10
+    #         vicon_yaw_diff[i] = -0
     #
     # plt.figure()
     # plt.plot(vicon_roll_diff)
@@ -165,28 +275,16 @@ def estimate_rot(data_num=1):
     # beta_rz = np.mean(gyro_z[0:500])
     # print("Gyro Bias: ")
     # print([beta_rx, beta_ry, beta_rz])  # [373.568, 375.356, 369.68]
-
-    beta_rx = 373.568
-    beta_ry = 375.356
-    beta_rz = 369.68
-
+    #
+    # beta_rx = 373.568
+    # beta_ry = 375.356
+    # beta_rz = 369.68
+    #
     # # We can formulate a least squares problem to solve for the gyroscope sensitivity
     # # using the vicon data as ground truth
     # imu_rx_wo_bias = gyro_x - beta_rx
     # imu_ry_wo_bias = gyro_y - beta_ry
     # imu_rz_wo_bias = gyro_z - beta_rz
-    #
-    #
-    # def solve_scale_factors(omega, v_prime):
-    #     # Make sure the length of omega and v_prime are the same
-    #     # If not the same, use the shorter one
-    #     if len(omega) > len(v_prime):
-    #         omega = omega[0:len(v_prime)]
-    #     if len(v_prime) > len(omega):
-    #         v_prime = v_prime[0:len(omega)]
-    #     S = np.sum(omega * v_prime) / np.sum(omega ** 2)
-    #     return S
-    #
     #
     # S_x = solve_scale_factors(imu_rx_wo_bias, vicon_roll_diff)
     # S_y = solve_scale_factors(imu_ry_wo_bias, vicon_pitch_diff)
@@ -197,19 +295,35 @@ def estimate_rot(data_num=1):
     # alpha_rz = 1 / (S_z * 1023 / 3300)
     # print("Gyro Sensitivity: ")
     # print([alpha_rx, alpha_ry, alpha_rz])  # [173.64053146945565, 204.52269156734403, 439.8366989965631]
-
-    # The alpha_rz data may not be reliable, so we can use the following parameters
-    alpha_rx = 173.64053146945565
-    alpha_ry = 204.52269156734403
-    alpha_rz = 204.52269156734403  # Originally 439.8366989965631
+    #
+    # # The alpha_rz data may not be reliable, so we can use the following parameters
+    # alpha_rx = 173.64053146945565
+    # alpha_ry = 204.52269156734403
+    # alpha_rz = 204.52269156734403  # Originally 439.8366989965631
 
     ## Unscented Kalman Filter
 
+    alpha_ax = 34.9051
+    alpha_ay = (34.5250 + 33.1863) / 2  # 33.85565
+    alpha_az = 34.6828
+    beta_ax = 510.808
+    beta_ay = 500.994
+    beta_az = 499.69
+
+    beta_rx = 373.568
+    beta_ry = 375.356
+    beta_rz = 369.68
+    alpha_rx = 173.64053146945565
+    alpha_ry = 204.52269156734403
+    alpha_rz = 204.52269156734403
+
+    # Ref: https://github.com/YugAjmera/Robot-Localization-and-Mapping
     # Initialize roll, pitch, yaw as numpy arrays of length T
     roll = np.zeros(T)
     pitch = np.zeros(T)
     yaw = np.zeros(T)
     dt = imu['ts'][0, 1:] - imu['ts'][0, 0:-1]
+    dt = np.append(dt, dt[-1])
 
     # Calibrate the IMU data
     ax = -compute_imu_data(accel[0, :], alpha_ax, beta_ax)
@@ -244,38 +358,53 @@ def estimate_rot(data_num=1):
     for i in range(T):
 
         # Sigma points generation and transformation
-        Sigma_X_i = np.zeros((7, 12))
-        Sigma_Y_i = np.zeros((7, 12))
-        S = np.linalg.cholesky(P_km1 + Q)  # Eq (35)
-        # W_{i,i+n} = columns of (±sqrt(2n)S)
-        W_maker = np.hstack((S, -S))  # To compute set {W_i}
-        q_x = Quaternion(x_km1[0, 0], x_km1[1:4, 0])
-        q_x.normalize()
-        for j in range(12):
-            # Generate sigma points Sigma_X_i
-            # q_W is the quaternion to the first three components of W_i
-            q_W = Quaternion(0, W_maker[0:3, j])
-            q_X = q_x * q_W  # Eq (34)
-            q_X.normalize()
-            Sigma_X_i[0:4, j] = q_X.q
-            Sigma_X_i[4:7, j] = x_km1[4:7, 0] + W_maker[3:6, j]
-
-            # Transform sigma points
-            q_d = Quaternion()
-            q_d.from_axis_angle(Sigma_X_i[4:7, j] * dt[i])
-            q_Y = q_X * q_d
-            q_Y.normalize()
-            Sigma_Y_i[0:4, j] = q_Y.q
+        Sigma_X_i, Sigma_Y_i = sigma_points_gen_and_trans(x_km1, P_km1, Q, dt, i)
 
         # Compute the mean and covariance of the transformed sigma points
+        Y_mean = compute_mean_Y(Sigma_Y_i, Sigma_X_i[0:4, 0])
+        W_residual = compute_W_residual(Sigma_Y_i, Y_mean)
+        Y_cov = compute_Y_cov(W_residual)
 
+        # Compute sigma points in the measurement space (Z)
+        Z = compute_Z(Sigma_Y_i)
+        Z_mean = np.mean(Z, axis=1).reshape(6, 1)
+        # Use data from IMU as the observation
+        Z_observe = np.zeros((6, 1))
+        Z_observe[0:3, 0] = np.array([ax[i], ay[i], az[i]])
+        Z_observe[3:6, 0] = np.array([rx[i], ry[i], rz[i]])
 
+        # Compute the innovation and the Kalman gain
+        P_zz = (Z - Z_mean) @ (Z - Z_mean).T / 12  # uncertainty of the predicted measurement, Eq (68)
+        P_vv = P_zz + R  # covariance of the measurement, Eq (69)
+        P_xz = W_residual @ (Z - Z_mean).T / 12  # cross correlation matrix, Eq (70)
+        K_k = P_xz @ np.linalg.inv(P_vv)  # Kalman gain, Eq (72)
+        P_k = Y_cov - K_k @ P_vv @ K_k.T  # covariance update, Eq (75)
+        v_k = Z_observe - Z_mean  # innovation
 
+        # Update the state and covariance
+        # Note that quaternions can not be directly added
+        # So first, convert the innovation with Kalman gain to a quaternion
+        q_Kv = Quaternion()
+        v_k = K_k @ v_k
+        q_Kv.from_axis_angle(v_k[0:3, 0])
+        q_xk = Quaternion(Y_mean[0, 0], Y_mean[1:4, 0])
+        # Then, multiply the quaternion with the state quaternion
+        q_xk = q_Kv * q_xk
+        q_xk.normalize()
+        # Update the state vector
+        x_km1[0:4, 0] = q_xk.q
+        # Update the angular velocity, can be directly added
+        x_km1[4:7, 0] += v_k[3:6, 0]
 
+        # Update the covariance matrix
+        P_km1 = P_k
 
-
-
-
+        # Compute the roll, pitch, and yaw
+        q_xk = Quaternion(x_km1[0, 0], x_km1[1:4, 0])
+        euler = q_xk.euler_angles()
+        roll[i] = euler[0]
+        pitch[i] = euler[1]
+        yaw[i] = euler[2]
 
     return roll, pitch, yaw
 
