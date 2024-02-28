@@ -15,7 +15,7 @@ def compute_imu_data(raw_data, alpha, beta):
     # raw_data is a 1xN matrix where N is the number of samples
     # alpha and beta are the calibration parameters
     # returns a 1xN matrix of calibrated data
-    return (raw_data - beta) * 3300 / 1023 / alpha
+    return (raw_data - beta) * 3300.0 / 1023.0 / alpha
 
 
 def solve_scale_factors(omega, v_prime):
@@ -32,7 +32,8 @@ def solve_scale_factors(omega, v_prime):
 def sigma_points_gen_and_trans(x_km1, P_km1, Q, dt, i):
     Sigma_X_i = np.zeros((7, 12))
     Sigma_Y_i = np.zeros((7, 12))
-    S = np.linalg.cholesky(P_km1 + Q)  # Eq (35)
+
+    S = np.linalg.cholesky(np.sqrt(6) * (P_km1 + Q))  # Eq (35)
     # W_{i,i+n} = columns of (±sqrt(2n)S)
     W_maker = np.hstack((S, -S))  # To compute set {W_i}
     q_x = Quaternion(x_km1[0, 0], x_km1[1:4, 0])
@@ -53,19 +54,20 @@ def sigma_points_gen_and_trans(x_km1, P_km1, Q, dt, i):
         q_Y = q_X * q_d
         q_Y.normalize()
         Sigma_Y_i[0:4, j] = q_Y.q
+        Sigma_Y_i[4:7, j] = Sigma_X_i[4:7, j]
 
     return Sigma_X_i, Sigma_Y_i
 
 
 def compute_mean_quaternion(q_Sigma_Y_i, q_init):
     # Define GD parameters
-    prev_e_norm = 10
-    thres = 1e-5
+    prev_e_norm = 5.0
+    thres = 1e-3
 
     e_hat = np.zeros(3)
     q_mean = Quaternion(q_init[0], q_init[1:4])
     count = 0
-    while np.abs(np.linalg.norm(e_hat) - prev_e_norm) > thres and count < 70:
+    while np.abs(np.linalg.norm(e_hat) - prev_e_norm) > thres and count < 100:
         prev_e_norm = np.linalg.norm(e_hat)
         e_i = np.zeros((3, 12))
         for i in range(12):
@@ -110,13 +112,13 @@ def compute_W_residual(Sigma_Y_i, Y_mean):
 
 
 def compute_Y_cov(W_residual):
-    Y_cov = (W_residual @ W_residual.T) / 12
+    Y_cov = (W_residual @ W_residual.T) / 12.0
     return Y_cov
 
 
 def compute_Z(Sigma_Y_i):
     Z = np.zeros((6, 12))
-    q_gravity = Quaternion(0, [0, 0, 1])  # gravity vector quaternion
+    q_gravity = Quaternion(0, [0, 0, 9.8])  # gravity vector quaternion
 
     for j in range(12):
         q_Sigma_Y_i_j = Quaternion(Sigma_Y_i[0, j], Sigma_Y_i[1:4, j])
@@ -137,8 +139,8 @@ def estimate_rot(data_num=1):
 
     ### Your code goes here
 
-    # ## IMU Calibration
-    #
+    ## IMU Calibration
+
     # # Load reference data
     # vicon = io.loadmat('vicon/viconRot' + str(data_num) + '.mat')  # not needed for autograder
     # T_vicon = np.shape(vicon['ts'])[1]
@@ -246,7 +248,7 @@ def estimate_rot(data_num=1):
     # vicon_yaw_diff = np.zeros(T_vicon - 1)
     # for i in range(T_vicon - 1):
     #     vicon_roll_diff[i] = (vicon_roll[i + 1] - vicon_roll[i]) / (vicon['ts'][0, i + 1] - vicon['ts'][0, i])
-    #     if vicon_roll_diff[i] > 10:
+    #     if vicon_roll_diff[i] > 10:  # Remove the jump between pi and -pi, as well as the noise
     #         vicon_roll_diff[i] = 0
     #     if vicon_roll_diff[i] < -10:
     #         vicon_roll_diff[i] = 0
@@ -265,7 +267,7 @@ def estimate_rot(data_num=1):
     # plt.plot(vicon_roll_diff)
     # plt.plot(vicon_pitch_diff)
     # plt.plot(vicon_yaw_diff)
-    # plt.title('Vicon Angular Velocity')
+    # plt.title('Vicon Angular Acceleration')
     # plt.legend(['roll', 'pitch', 'yaw'])
     # plt.show()
     #
@@ -303,35 +305,44 @@ def estimate_rot(data_num=1):
 
     ## Unscented Kalman Filter
 
-    alpha_ax = 34.9051
-    alpha_ay = (34.5250 + 33.1863) / 2  # 33.85565
-    alpha_az = 34.6828
+    # alpha_ax = 34.9051
+    # alpha_ay = 33.85565
+    # alpha_az = 34.6828
+    # beta_ax = 510.808
+    # beta_ay = 500.994
+    # beta_az = 499.69
+    alpha_ax = 33.85565
+    alpha_ay = 33.85565
+    alpha_az = 33.85565
     beta_ax = 510.808
     beta_ay = 500.994
-    beta_az = 499.69
+    beta_az = 495.69
 
     beta_rx = 373.568
-    beta_ry = 375.356
+    beta_ry = 372.356
     beta_rz = 369.68
-    alpha_rx = 173.64053146945565
-    alpha_ry = 204.52269156734403
-    alpha_rz = 204.52269156734403
+    alpha_rx = 207.64053146945565
+    alpha_ry = 205.52269156734403
+    alpha_rz = 213.52269156734403
 
     # Ref: https://github.com/YugAjmera/Robot-Localization-and-Mapping
     # Initialize roll, pitch, yaw as numpy arrays of length T
     roll = np.zeros(T)
     pitch = np.zeros(T)
     yaw = np.zeros(T)
+
     dt = imu['ts'][0, 1:] - imu['ts'][0, 0:-1]
-    dt = np.append(dt, dt[-1])
+    dt = np.hstack((0,dt))
 
     # Calibrate the IMU data
     ax = -compute_imu_data(accel[0, :], alpha_ax, beta_ax)
     ay = -compute_imu_data(accel[1, :], alpha_ay, beta_ay)
     az = compute_imu_data(accel[2, :], alpha_az, beta_az)
-    rx = compute_imu_data(gyro[1, :], alpha_rx, beta_rx)
-    ry = compute_imu_data(gyro[2, :], alpha_ry, beta_ry)
+
+    rx = compute_imu_data(gyro[1, :], alpha_ry, beta_ry)
+    ry = compute_imu_data(gyro[2, :], alpha_rx, beta_rx)
     rz = compute_imu_data(gyro[0, :], alpha_rz, beta_rz)
+
     # Plot the calibrated IMU data
     # plt.figure()
     # plt.plot(ax)
@@ -352,8 +363,8 @@ def estimate_rot(data_num=1):
     x_km1[0, 0] = 1
     P_km1 = np.eye(6)
     # Initialize the process noise and measurement noise covariance matrices
-    Q = np.eye(6)  # process noise matrix (6,6)
-    R = np.eye(6)  # measurement noise matrix (6,6)
+    Q = 0.1 * np.eye(6).astype(float)  # process noise matrix (6,6)
+    R = 0.1 * np.eye(6).astype(float)  # measurement noise matrix (6,6)
 
     for i in range(T):
 
@@ -363,7 +374,8 @@ def estimate_rot(data_num=1):
         # Compute the mean and covariance of the transformed sigma points
         Y_mean = compute_mean_Y(Sigma_Y_i, Sigma_X_i[0:4, 0])
         W_residual = compute_W_residual(Sigma_Y_i, Y_mean)
-        Y_cov = compute_Y_cov(W_residual)
+        # Y_cov = compute_Y_cov(W_residual)  ###
+        Y_cov = (W_residual @ W_residual.T) / 12  # Eq (67)
 
         # Compute sigma points in the measurement space (Z)
         Z = compute_Z(Sigma_Y_i)
