@@ -26,73 +26,89 @@ class system:
             y[k] = self.observation(x[k])
         return x, y
 
+    def EKF(self, obs):
+        Q = 0.5
+        R = np.array([[1, 0], [0, 0.01]])
 
-class EKF:
-    def __init__(self, x_hat, a_hat, P, Q, R):
-        self.x_hat = x_hat
-        self.P = P
-        self.Q = Q
-        self.R = R
-        self.a_hat = a_hat
-        self.a_hat_history = []
+        N = len(obs)
 
-    def prediction(self, xk_hat):
-        # predict the state and cov(state) at k+1 given k
-        xkp1_hat = self.a_hat * xk_hat
-        P = (self.a_hat ** 2) * self.P + self.Q
-        return xkp1_hat, P
+        # Initial guesses
+        x_k_k = np.ones(N+1)
+        a_k_k = -10 * np.ones(N+1)
+        # s_k_k = np.array([[x_k_k[0]], [a_k_k[0]]])
+        Sigma_k_k = np.array([[2, 0], [0, 1]])
 
-    def update_step(self, yk, x_hat_kp1):
-        # Jacobian of the measurement function wrt the state
-        H_k = x_hat_kp1 / np.sqrt(x_hat_kp1 ** 2 + 1)
-        # Measurement prediction
-        y_hat_k = np.sqrt(x_hat_kp1 ** 2 + 1)
-        # Kalman gain
-        K_k = self.P * H_k / (H_k ** 2 * self.P + self.R)
-        # State update
-        self.a_hat += K_k * (yk - y_hat_k)
-        # Covariance update
-        self.P = (1 - K_k * H_k) * self.P
-        # Store the estimate
-        self.a_hat_history.append(self.a_hat)
+        for k in range(N):
+            # Propagate nonlinear dynamics
+            x_kp1_k = a_k_k[k] * x_k_k[k]  # mean x
+            a_kp1_k = a_k_k[k]  # mean a
+            s_kp1_k = np.array([[x_kp1_k], [a_kp1_k]])
 
-    def run_ekf(self, D):
-        # Initialize state estimate with first measurement assuming a=1
-        x_hat_k = np.sqrt(D[0] ** 2 - 1)
-        for yk in D:
-            # Prediction step
-            x_hat_kp1, P_kp1 = self.prediction(x_hat_k)
-            # Update step
-            self.update_step(yk, x_hat_kp1)
-            # The new estimate becomes the current estimate for the next iteration
-            x_hat_k = x_hat_kp1
-            self.P = P_kp1
+            # Linearize dynamics
+            J_k = np.array([[a_k_k[k], x_k_k[k]], [0, 1]])
 
-        return self.a_hat_history, self.P
+            # Compute covariance
+            Sigma_kp1_k = J_k @ Sigma_k_k @ J_k.T + R
+
+            # Linearize observation
+            C_k1 = x_kp1_k / np.sqrt(x_kp1_k ** 2 + 1)
+            C_k = np.array([[C_k1, 0]])
+
+            # Compute Kalman gain
+            to_be_inv = C_k @ Sigma_kp1_k @ C_k.T + Q
+            inv = np.linalg.inv(to_be_inv)
+            K_k = Sigma_kp1_k @ C_k.T @ inv
+
+            # Incorporate the observation
+            obs_kp1 = obs[k]
+            obs_hat_kp1 = np.sqrt(x_kp1_k ** 2 + 1)
+            s_kp1_kp1 = s_kp1_k + K_k.reshape((2, 1)) @ ((obs_kp1 - obs_hat_kp1).reshape((-1, 1)))
+            Sigma_kp1_kp1 = (np.eye(2) - K_k @ C_k) @ Sigma_kp1_k
+
+            # Update iteration
+            Sigma_k_k = Sigma_kp1_kp1
+            s_k_k = s_kp1_kp1
+            x_k_k[k+1] = s_k_k[0, 0]
+            a_k_k[k+1] = s_k_k[1, 0]
+
+        return x_k_k, a_k_k
 
 
 if __name__ == "__main__":
+
     a = -1  # true value of a
     sys = system(a)
-    x0 = np.random.normal(1, np.sqrt(2))
-    _, D = sys.simulate(x0)  # we only know the observation
+    x0 = np.random.normal(1, np.sqrt(2))  # x0 N(1,2)
+    x, D = sys.simulate(x0)  # we only know the observation
 
-    # EKF
-    x_hat = 0
-    a_hat = 1
-    P = 1
-    Q = 1
-    R = 0.5
-    ekf = EKF(x_hat, a_hat, P, Q, R)
-    a_hat_history, P = ekf.run_ekf(D)
+    # Plot x
+    plt.figure()
+    plt.plot(x)
+    plt.xlabel("Iterations")
+    plt.ylabel("$x_k$")
+    plt.title("Real state $x_k$")
 
-    # Plot
-    plt.plot(a_hat_history)
-    plt.axhline(a, color='r', linestyle='--')
-    plt.xlabel('iteration')
-    plt.ylabel('a_hat')
-    plt.title('EKF estimate of a')
+    # Plot D
+    plt.figure()
+    plt.plot(D)
+    plt.xlabel("Iterations")
+    plt.ylabel("$y_k$")
+    plt.title("Observation $y_k$")
+
+    # Use EKF
+    x_arr, a_arr = sys.EKF(D)
+
+    # Plot estimated x
+    plt.figure()
+    plt.plot(x_arr)
+    plt.xlabel("Iterations")
+    plt.ylabel("$\hat{x}_k$")
+    plt.title("Estimated state $\hat{x}_k$")
+
+    # Plot estimated a
+    plt.figure()
+    plt.plot(a_arr)
+    plt.xlabel("Iterations")
+    plt.ylabel("$\hat{a}_k$")
+    plt.title("Estimated system parameter $\hat{a}_k$")
     plt.show()
-    print('Final estimate of a:', a_hat_history[-1])
-    print('Final covariance:', P)
-
