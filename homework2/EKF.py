@@ -37,6 +37,8 @@ class system:
         a_k_k = -10 * np.ones(N+1)
         # s_k_k = np.array([[x_k_k[0]], [a_k_k[0]]])
         Sigma_k_k = np.array([[2, 0], [0, 1]])
+        cov_x = []
+        cov_a = []
 
         for k in range(N):
             # Propagate nonlinear dynamics
@@ -70,8 +72,10 @@ class system:
             s_k_k = s_kp1_kp1
             x_k_k[k+1] = s_k_k[0, 0]
             a_k_k[k+1] = s_k_k[1, 0]
+            cov_x.append(Sigma_k_k[0,0])
+            cov_a.append(Sigma_k_k[1,1])
 
-        return x_k_k, a_k_k
+        return x_k_k[1:], cov_x, cov_a, a_k_k[1:]
 
 
 if __name__ == "__main__":
@@ -96,7 +100,7 @@ if __name__ == "__main__":
     plt.title("Observation $y_k$")
 
     # Use EKF
-    x_arr, a_arr = sys.EKF(D)
+    x_arr, cov_x, cov_a, a_arr = sys.EKF(D)
 
     # Plot estimated x
     plt.figure()
@@ -105,9 +109,26 @@ if __name__ == "__main__":
     plt.ylabel("$\hat{x}_k$")
     plt.title("Estimated state $\hat{x}_k$")
 
+    # Plot estimated cov
+    plt.figure()
+    plt.plot(cov_a)
+    plt.xlabel("Iterations")
+    plt.ylabel("$\Sigma$")
+    plt.title("Covariance of $a$")
+
+    plt.figure()
+    plt.plot(cov_x)
+    plt.xlabel("Iterations")
+    plt.ylabel("$\Sigma$")
+    plt.title("Covariance of $x$")
+
     # Plot estimated a
     plt.figure()
     plt.plot(a_arr)
+    plt.plot(a_arr + cov_a)
+    plt.plot(a_arr - cov_a)
+    plt.plot(-np.ones(100))
+    plt.legend(["$\hat{a}_k$", "$\mu+\sigma$", "$\mu-\sigma$", "$-1$"])
     plt.xlabel("Iterations")
     plt.ylabel("$\hat{a}_k$")
     plt.title("Estimated system parameter $\hat{a}_k$")

@@ -8,8 +8,11 @@
       <excludeFolder url="file://$MODULE_DIR$/python_venv/.venv/share" />
       <excludeFolder url="file://$MODULE_DIR$/.tmp.driveupload" />
       <excludeFolder url="file://$MODULE_DIR$/Other" />
+      <excludeFolder url="file://$MODULE_DIR$/.idea/copilot/chatSessions" />
+      <excludeFolder url="file://$MODULE_DIR$/homework3/p3/data/data/images" />
+      <excludeFolder url="file://$MODULE_DIR$/homework3/p2/data/train" />
     </content>
-    <orderEntry type="inheritedJdk" />
+    <orderEntry type="jdk" jdkName="Python 3.8 (ESE-6500)" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />
   </component>
 </module>
