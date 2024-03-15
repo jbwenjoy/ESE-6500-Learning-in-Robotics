@@ -1,4 +1,4 @@
-# Pratik Chaudhari (pratikac@seas.upenn.edu)
+# Pratik Chaudhari (pratikac@seas)
 
 import os, sys, pickle, math
 from copy import deepcopy
