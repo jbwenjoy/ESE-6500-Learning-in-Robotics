@@ -1,5 +1,3 @@
-# Pratik Chaudhari (pratikac@seas)
-
 import pickle
 from scipy import io
 import numpy as np
@@ -13,7 +11,7 @@ def load_lidar_data(fn):
         t = {}
         t['t'] = m[0][0][0][0][0]  # Unix time in seconds
         nn = len(m[0][0])
-        if (nn != 5) and (n != 6):
+        if (nn != 5) and (nn != 6):
             raise ValueError('Corrupted lidar data')
 
         # +x axis points forwards, +y points left, +z points upwards
@@ -34,10 +32,10 @@ def load_joint_data(fn):
     keys = ['acc', 'ts', 'rpy', 'gyro', 'pos', 'ft_l', 'ft_r', 'head_angles']
     d = io.loadmat(fn)
     j = {k: d[k] for k in keys}
-    j['t'] = j['ts'].squeeze();
-    j['xyz'] = j['pos'];
-    j.pop('ts');
-    j.pop('pos');
+    j['t'] = j['ts'].squeeze()
+    j['xyz'] = j['pos']
+    j.pop('ts')
+    j.pop('pos')
     return j
 
 
@@ -47,8 +45,8 @@ def show_lidar(d):
     # the optical axis
     th = np.arange(0, 270.25, 0.25) * np.pi / 180.0
 
-    plt.figure(1);
-    plt.clf();
+    plt.figure(1)
+    plt.clf()
     ax = plt.subplot(111, projection='polar')
     try:
         for i in range(200, len(d), 10):
@@ -77,3 +75,23 @@ joint_names = ['Neck', 'Head', 'ShoulderL', 'ArmUpperL', 'LeftShoulderYaw', 'Arm
                'r_wrist_grip3', 'ChestLidarPan']
 joint_name_to_index = {k: v for v, k in zip(range(len(joint_names)), joint_names)}
 joint_index_to_name = {v: k for v, k in zip(range(len(joint_names)), joint_names)}
+
+
+if __name__ == '__main__':
+
+    import os
+
+    # load the data
+    idx = 0
+    split = 'train'
+    lidar = load_lidar_data(os.path.join('data/%s/%s_lidar%d' % (split, split, idx)))
+    joint = load_joint_data(os.path.join('data/%s/%s_joint%d' % (split, split, idx)))
+
+    print('lidar:', lidar[0].keys())  # lidar: dict_keys(['t', 'xyth', 'resolution', 'rpy', 'scan'])
+
+    print('joint:', joint.keys())  # joint: dict_keys(['acc', 'rpy', 'gyro', 'ft_l', 'ft_r', 'head_angles', 't', 'xyz'])
+
+    # visualize the lidar data
+    show_lidar(lidar)
+
+    print('done')

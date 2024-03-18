@@ -10,6 +10,7 @@ import json
 import imageio
 import cv2
 
+
 def load_colmap_data():
     r"""
     After using colmap2nerf.py to convert the colmap intrinsics and extrinsics,
@@ -71,9 +72,9 @@ def positional_encoding():
 
 
 def volume_rendering(
-    radiance_field: torch.Tensor,
-    ray_origins: torch.Tensor,
-    depth_values: torch.Tensor
+        radiance_field: torch.Tensor,
+        ray_origins: torch.Tensor,
+        depth_values: torch.Tensor
 ) -> Tuple[torch.Tensor]:
     r"""Differentiably renders a radiance field, given the origin of each ray in the
     bundle, and the sampled depth values along them.
@@ -94,33 +95,33 @@ def volume_rendering(
 
 class TinyNeRF(torch.nn.Module):
     def __init__(self, pos_dim, fc_dim=128):
-      r"""Initialize a tiny nerf network, which composed of linear layers and
-      ReLU activation. More specifically: linear - relu - linear - relu - linear
-      - relu -linear. The module is intentionally made small so that we could 
-      achieve reasonable training time
+        r"""Initialize a tiny nerf network, which composed of linear layers and
+        ReLU activation. More specifically: linear - relu - linear - relu - linear
+        - relu -linear. The module is intentionally made small so that we could
+        achieve reasonable training time
 
-      Args:
-        pos_dim: dimension of the positional encoding output
-        fc_dim: dimension of the fully connected layer
-      """
-      super().__init__()
+        Args:
+          pos_dim: dimension of the positional encoding output
+          fc_dim: dimension of the fully connected layer
+        """
+        super().__init__()
 
-      self.nerf = nn.Sequential(
-                    nn.Linear(pos_dim, fc_dim),
-                    nn.ReLU(),
-                    nn.Linear(fc_dim, fc_dim),
-                    nn.ReLU(),
-                    nn.Linear(fc_dim, fc_dim),
-                    nn.ReLU(),
-                    nn.Linear(fc_dim, 4)
-                  )
-    
+        self.nerf = nn.Sequential(
+            nn.Linear(pos_dim, fc_dim),
+            nn.ReLU(),
+            nn.Linear(fc_dim, fc_dim),
+            nn.ReLU(),
+            nn.Linear(fc_dim, fc_dim),
+            nn.ReLU(),
+            nn.Linear(fc_dim, 4)
+        )
+
     def forward(self, x):
-      r"""Output volume density and RGB color (4 dimensions), given a set of 
-      positional encoded points sampled from the rays
-      """
-      x = self.nerf(x)
-      return x
+        r"""Output volume density and RGB color (4 dimensions), given a set of
+        positional encoded points sampled from the rays
+        """
+        x = self.nerf(x)
+        return x
 
 
 def get_minibatches(inputs: torch.Tensor, chunksize: Optional[int] = 1024 * 8):
@@ -132,8 +133,8 @@ def get_minibatches(inputs: torch.Tensor, chunksize: Optional[int] = 1024 * 8):
 
 
 def nerf_step_forward(height, width, focal_length, trans_matrix,
-                            near_point, far_point, num_depth_samples_per_ray,
-                            get_minibatches_function, model):
+                      near_point, far_point, num_depth_samples_per_ray,
+                      get_minibatches_function, model):
     r"""Perform one iteration of training, which take information of one of the
     training images, and try to predict its rgb values
 
@@ -153,7 +154,7 @@ def nerf_step_forward(height, width, focal_length, trans_matrix,
     """
     ################### YOUR CODE START ###################
     # TODO: Get the "bundle" of rays through all image pixels
-    
+
     # TODO: Sample points along each ray
 
     # TODO: positional encoding, shape of return [H*W*num_samples, (include_input + 2*freq) * 3]
@@ -165,12 +166,12 @@ def nerf_step_forward(height, width, focal_length, trans_matrix,
     batches = get_minibatches_function(positional_encoded_points, chunksize=16384)
     predictions = []
     for batch in batches:
-      predictions.append(model(batch))
-    radiance_field_flattened = torch.cat(predictions, dim=0) # (H*W*num_samples, 4)
+        predictions.append(model(batch))
+    radiance_field_flattened = torch.cat(predictions, dim=0)  # (H*W*num_samples, 4)
 
     # "Unflatten" the radiance field.
-    unflattened_shape = [height, width, num_depth_samples_per_ray, 4] # (H, W, num_samples, 4)
-    radiance_field = torch.reshape(radiance_field_flattened, unflattened_shape) # (H, W, num_samples, 4)
+    unflattened_shape = [height, width, num_depth_samples_per_ray, 4]  # (H, W, num_samples, 4)
+    radiance_field = torch.reshape(radiance_field_flattened, unflattened_shape)  # (H, W, num_samples, 4)
 
     ################### YOUR CODE START ###################
     # TODO: Perform differentiable volume rendering to re-synthesize the RGB image. # (H, W, 3)
@@ -178,7 +179,7 @@ def nerf_step_forward(height, width, focal_length, trans_matrix,
     ################### YOUR CODE END ###################
 
 
-def train(images, poses, hwf, near_point, 
+def train(images, poses, hwf, near_point,
           far_point, num_depth_samples_per_ray,
           num_iters, model, DEVICE="cuda"):
     r"""Training a tiny nerf model
@@ -208,22 +209,22 @@ def train(images, poses, hwf, near_point,
     np.random.seed(seed)
 
     for _ in tqdm(range(num_iters)):
-      # Randomly pick a training image as the target, get rgb value and camera pose
-      train_idx = np.random.randint(n_train)
-      train_img_rgb = images[train_idx, ..., :3]
-      train_pose = poses[train_idx]
+        # Randomly pick a training image as the target, get rgb value and camera pose
+        train_idx = np.random.randint(n_train)
+        train_img_rgb = images[train_idx, ..., :3]
+        train_pose = poses[train_idx]
 
-      # Run one iteration of TinyNeRF and get the rendered RGB image.
-      rgb_predicted = nerf_step_forward(H, W, focal_length,
-                                              train_pose, near_point,
-                                              far_point, num_depth_samples_per_ray,
-                                              get_minibatches, model)
+        # Run one iteration of TinyNeRF and get the rendered RGB image.
+        rgb_predicted = nerf_step_forward(H, W, focal_length,
+                                          train_pose, near_point,
+                                          far_point, num_depth_samples_per_ray,
+                                          get_minibatches, model)
 
-      # Compute mean-squared error between the predicted and target images
-      loss = torch.nn.functional.mse_loss(rgb_predicted, train_img_rgb)
-      loss.backward()
-      optimizer.step()
-      optimizer.zero_grad()
+        # Compute mean-squared error between the predicted and target images
+        loss = torch.nn.functional.mse_loss(rgb_predicted, train_img_rgb)
+        loss.backward()
+        optimizer.step()
+        optimizer.zero_grad()
 
     print('Finish training')
 
