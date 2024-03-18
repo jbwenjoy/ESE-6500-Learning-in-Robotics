@@ -123,8 +123,6 @@ def run_slam(src_dir, log_dir, idx, split):
     # Find index of the joint timestamp that is closest to the first LiDAR timestamp
     t0 = np.argmin(np.abs(joint_timestamps - lidar_timestamp))
 
-
-
     # Initialize the occupancy grid using one particle and calling the observation_step function
     #### DONE: XXXXXXXXXXX
 
@@ -149,10 +147,35 @@ def run_slam(src_dir, log_dir, idx, split):
         slam.dynamics_step(t)
         slam.observation_step(t)
         # Visualize the map and particles at certain steps
-        if t % 50 == 0:
-            slam.map.visualize()  # This would be a custom method for visualization
+        if t % 10 == 0:
+            print('Visualizing map at t =', t)
+
+            # # Before returning, add visualization
+            # plt.figure(figsize=(12, 6))
+            #
+            # # Subplot for the particles
+            # ax1 = plt.subplot(121)
+            # ax1.scatter(slam.p[0, :], slam.p[1, :], c='r', marker='.', s=50)  # Plot particle positions
+            # ax1.set_title('Final Particle Positions')
+            # ax1.set_xlabel('X position')
+            # ax1.set_ylabel('Y position')
+            # ax1.grid(True)
+            #
+            # # Subplot for the map (if applicable)
+            # # This assumes your map is a 2D occupancy grid. Update accordingly if your map is different.
+            # ax2 = plt.subplot(122)
+            # if hasattr(slam, 'map'):
+            #     ax2.imshow(slam.map, cmap='gray', origin='lower')  # Assuming slam.map is a 2D numpy array
+            #     ax2.set_title('Final Map')
+            #     ax2.set_xlabel('X position')
+            #     ax2.set_ylabel('Y position')
+            #
+            # plt.tight_layout()
+            # plt.savefig(os.path.join(log_dir, f'slam_final_{split}_{idx}.jpg'))
+            # plt.show()
 
 
+    return slam
 
 
 @click.command()
