@@ -1,5 +1,5 @@
 import click, tqdm, random
-
+import matplotlib.pyplot as plt
 from slam import *
 
 
@@ -62,12 +62,14 @@ def run_dynamics_step(src_dir, log_dir, idx, split, t0=0, draw_fig=False):
 
 def run_observation_step(src_dir, log_dir, idx, split, is_online=False):
     """
-    This function is for you to debug your observation update step
-    It will create three particles np.array([[0.2, 2, 3],[0.4, 2, 5],[0.1, 2.7, 4]])
-    * Note that the particle array has the shape 3 x num_particles so
-    the first particle is at [x=0.2, y=0.4, z=0.1]
+    This function is for you to debug your observation update step.
+    It will create three particles np.array([[0.2, 2, 3],[0.4, 2, 5],[0.1, 2.7, 4]]).
+
+    * Note that the particle array has the shape 3 x num_particles so the first particle is at [x=0.2, y=0.4, z=0.1]
+
     This function will build the first map and update the 3 particles for one time step.
-    After running this function, you should get that the weight of the second particle is the largest since it is the closest to the origin [0, 0, 0]
+    After running this function, you should get that the weight of the second particle
+    is the largest since it is the closest to the origin [0, 0, 0]
     """
     slam = slam_t(resolution=0.05)
     slam.read_data(src_dir, idx, split)
@@ -89,6 +91,7 @@ def run_observation_step(src_dir, log_dir, idx, split, is_online=False):
     logging.info('\n')
     n = 3
     w = np.ones(n) / float(n)
+    # p = np.array([[0.2, 2, 3], [0.4, 2, 5], [0.1, 2.7, 4]])
     p = np.array([[2, 0.2, 3], [2, 0.4, 5], [2.7, 0.1, 4]])
     slam.init_particles(n, p, w)
 
@@ -117,63 +120,53 @@ def run_slam(src_dir, log_dir, idx, split):
     # I noticed that in the test data, the 2048th joint data has the closest timestamp to the 0th lidar data
     # so I will use the 2048th joint data to initialize the map
     # The interval of the joint data is about 0.0084 seconds, and the lidar about 0.024880 seconds
-
     joint_timestamps = slam.joint['t']
     lidar_timestamp = slam.lidar[0]['t']  # First LiDAR timestamp
-    # Find index of the joint timestamp that is closest to the first LiDAR timestamp
-    t0 = np.argmin(np.abs(joint_timestamps - lidar_timestamp))
+    t0 = slam.lidar[0]['t']  # Initialize t0 to the first LiDAR timestamp
 
     # Initialize the occupancy grid using one particle and calling the observation_step function
     #### DONE: XXXXXXXXXXX
 
     # Assuming t0 has been correctly identified:
-    initial_yaw = slam.joint['head_angles'][1, t0]  # Assuming second head angle is yaw
-    initial_xyth = np.array([slam.lidar[t0]['xyth'][0], slam.lidar[t0]['xyth'][1], initial_yaw]).reshape((3, 1))
-    slam.init_particles(n=1, p=initial_xyth, w=np.array([1]))  # Initialize with one particle at lidar position
-    slam.observation_step(t=t0)  # Use observation step to update map with initial data
+    initial_xyth = slam.lidar[0]['xyth']  # Extract the xyth from the lidar data
+    initial_xyth[2] = slam.lidar[0]['rpy'][2]  # Extract the yaw from the lidar data
+
+    # Initialize with one particle at lidar position
+    slam.init_particles(n=1, p=initial_xyth.reshape((3, 1)), w=np.array([1]).astype(float))
+    slam.observation_step(0)
 
     # SLAM, save data to be plotted later.
     #### DONE: XXXXXXXXXXX
 
     n_particles = 100  # Number of particles
+    estimated_pose = []  # Estimated pose list
     # Initialize particles around the first pose with some small random variation
-    initial_xyth_expanded = np.tile(initial_xyth, (1, n_particles))
+    initial_xyth_expanded = np.tile(initial_xyth, (n_particles, 1)).T
     noise = np.random.randn(3, n_particles) * np.array([0.1, 0.1, 0.05])[:, None]
     p = initial_xyth_expanded + noise  # Small noise around initial pose
     w = np.ones(n_particles) / n_particles  # Equal initial weight
-    slam.init_particles(n=n_particles, p=p, w=w)
+    slam.init_particles(n=n_particles, p=p.reshape((3, n_particles)), w=w)
+    slam.dynamics_step(0)
 
-    for t in range(1, T):  # Start at 1 since we've already initialized at t0
+    for t in tqdm.tqdm(range(1, T)):  # Start at 1 since we've already initialized at t0, use tqdm for progress bar
         slam.dynamics_step(t)
         slam.observation_step(t)
+        estimated_pose.append(slam.estimated_pose)
         # Visualize the map and particles at certain steps
-        if t % 10 == 0:
-            print('Visualizing map at t =', t)
+        # if t % 50 == 0:
+        #     print('Visualizing map at t =', t)
 
-            # # Before returning, add visualization
-            # plt.figure(figsize=(12, 6))
-            #
-            # # Subplot for the particles
-            # ax1 = plt.subplot(121)
-            # ax1.scatter(slam.p[0, :], slam.p[1, :], c='r', marker='.', s=50)  # Plot particle positions
-            # ax1.set_title('Final Particle Positions')
-            # ax1.set_xlabel('X position')
-            # ax1.set_ylabel('Y position')
-            # ax1.grid(True)
-            #
-            # # Subplot for the map (if applicable)
-            # # This assumes your map is a 2D occupancy grid. Update accordingly if your map is different.
-            # ax2 = plt.subplot(122)
-            # if hasattr(slam, 'map'):
-            #     ax2.imshow(slam.map, cmap='gray', origin='lower')  # Assuming slam.map is a 2D numpy array
-            #     ax2.set_title('Final Map')
-            #     ax2.set_xlabel('X position')
-            #     ax2.set_ylabel('Y position')
-            #
-            # plt.tight_layout()
-            # plt.savefig(os.path.join(log_dir, f'slam_final_{split}_{idx}.jpg'))
-            # plt.show()
-
+    estimated_pose = np.array(estimated_pose)  # Convert to numpy array
+    fig = plt.figure()
+    bound = np.where(slam.map.cells > 0.5)  # Occupied cells
+    pose_x, pose_y = slam.map.grid_cell_from_xy(estimated_pose[:, 0], estimated_pose[:, 1])  # Convert pose to grid cell
+    plt.plot(pose_x, pose_y, 'r')  # Plot estimated pose
+    plt.plot(bound[0], bound[1], 'k.')  # Plot occupied cells
+    plt.xlim([0, slam.map.szx])
+    plt.xlim([0, slam.map.szx])
+    plt.title('SLAM Map')
+    plt.savefig(os.path.join(log_dir, 'slam_map_%s_%02d.jpg' % (split, idx)))  # Save map plot
+    plt.close(fig)  # Close figure
 
     return slam
 

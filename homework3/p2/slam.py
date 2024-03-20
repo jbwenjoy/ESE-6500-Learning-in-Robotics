@@ -56,10 +56,10 @@ class map_t:
         grid_y = np.floor((y - self.ymin) / self.resolution).astype(int)
 
         # Make sure the indices are within the map
-        grid_x = np.clip(grid_x, 0, self.szx - 1)
-        grid_y = np.clip(grid_y, 0, self.szy - 1)
+        grid_x = np.clip(grid_x, 0, self.szx - 1).astype(int)
+        grid_y = np.clip(grid_y, 0, self.szy - 1).astype(int)
 
-        return np.vstack((grid_x, grid_y))
+        return grid_x, grid_y
 
 
 class slam_t:
@@ -153,32 +153,22 @@ class slam_t:
         #### DONE: XXXXXXXXXXX
 
         # If we enter this function, we need to resample the particles as it falls below the threshold
+        # print('Resampling')
 
-        # Get the number of particles
-        n = w.shape[0]
+        particles_slam = p.T
+        weights_slam = (w*len(w)*10).astype(int)
 
-        # Get the cumulative sum of the weights
-        cum_sum = np.cumsum(w)
+        circular_list = np.vstack((np.repeat(particles_slam[:, 0], weights_slam),
+                                   np.repeat(particles_slam[:, 1], weights_slam),
+                                   np.repeat(particles_slam[:, 2], weights_slam)))
+        indexes = np.random.uniform(
+            0, circular_list.shape[0], len(w)).astype(int)
+        resampled_particles = circular_list[:, indexes]
+        resampled_weights = np.ones(
+            len(resampled_particles[0]))/len(resampled_particles[0])
 
-        # Generate the random numbers
-        # r is uniformly distributed random numbers between 0 and 1/n
-        r = (np.random.rand() + np.arange(n)) / n
+        return resampled_particles, resampled_weights
 
-        # Initialize the new particles and weights
-        new_p = np.zeros(p.shape)
-        new_w = np.zeros(n)
-
-        # Resample the particles
-        i, j = 0, 0
-        while i < n:
-            if r[i] < cum_sum[j]:
-                new_p[:, i] = p[:, j]
-                new_w[i] = 1 / n
-                i += 1
-            else:
-                j += 1
-
-        return new_p, new_w
 
     @staticmethod
     def log_sum_exp(w):
@@ -196,21 +186,23 @@ class slam_t:
 
         Return an array (2 x num_rays) which are the (x,y) locations of the end point of each ray in world coordinates
         """
-        #### DONE: XXXXXXXXXXX
+        #### Done and Checked: XXXXXXXXXXX
 
-        # make sure each distance >= dmin and <= dmax, otherwise something is wrong in reading the data
-        # assert np.all(d >= self.lidar_dmin) and np.all(d <= self.lidar_dmax)
-        d = np.clip(d, self.lidar_dmin, self.lidar_dmax)
+        # Make sure each distance >= dmin and <= dmax, otherwise something is wrong in reading the data
+        # We will just drop out-of-range distances
+        valid_indices = np.logical_and(d >= self.lidar_dmin, d <= self.lidar_dmax)
+        d = d[valid_indices]
+        angles = angles[valid_indices]
 
         # 1. from lidar distances to points in the LiDAR frame
-        lidar_frame_points = np.vstack((d * np.cos(angles), d * np.sin(angles), np.zeros(len(d))))
+        lidar_frame_points_3d = np.vstack((d * np.cos(angles), d * np.sin(angles), np.zeros(len(d))))
 
         # 2. from LiDAR frame to the body frame
         # We need to consider the head and neck angles, so here we have three euler angles with zero roll
         # We also need to consider the height of the LiDAR in the body frame, i.e. self.lidar_height
         ### WARNING! Make sure: (a) radians/degrees; (b) positive/negative
         lidar_to_body = euler_to_se3(0, head_angle, neck_angle, np.array([0, 0, self.lidar_height]))
-        body_frame_points_4d = lidar_to_body @ make_homogeneous_coords_3d(lidar_frame_points)  # 4xN
+        body_frame_points_4d = lidar_to_body @ make_homogeneous_coords_3d(lidar_frame_points_3d)  # 4xN
 
         # 3. from body frame to world frame
         # Using p as the pose of the particle, we can transform the points from the body frame to the world frame
@@ -224,12 +216,13 @@ class slam_t:
         world_frame_points_3d = world_frame_points_4d[:3] / world_frame_points_4d[3]
 
         # Return the 2D points
+        # result = world_frame_points_3d[:2]
         return world_frame_points_3d[:2]
 
     def get_control(self, t):
         """
         Use the pose at time t and t-1 to calculate what control the robot could have taken
-          at time t-1 at state (x,y,th)_{t-1} to come to the current state (x,y,th)_t.
+          at time t-1 at state (x,y,th)_{t-1} to come tomax_weight_particle state (x,y,th)_t.
         We will assume that this is the same control that
           the robot will take in the function dynamics_step below at time t to go to time t-1.
         Need to use the smart_minus_2d function to get the difference of the two poses,
@@ -239,11 +232,11 @@ class slam_t:
         if t == 0:
             return np.zeros(3)
 
-        #### DONE: XXXXXXXXXXX
+        #### Done and Checked: XXXXXXXXXXX
 
-        # Get the pose at time t-1 and t
-        previous_pose = self.p[:, t - 1]
-        current_pose = self.p[:, t]
+        # Get the pose at time t-1 andmax_weight_particle_pose = self.lidar[t]['xyth']
+        previous_pose = self.lidar[t - 1]['xyth']
+        current_pose = self.lidar[t]['xyth']
 
         # Get the control, i.e. the difference between the two poses
         control = smart_minus_2d(current_pose, previous_pose)
@@ -263,10 +256,10 @@ class slam_t:
         # Perform control on each particle
         for i in range(self.n):
             # Add noise to the control
-            noisy_control = control + np.random.multivariate_normal(np.zeros(3), self.Q)
+            noisy_control = control + np.random.multivariate_normal(np.zeros(self.Q.shape[0]), self.Q)
 
             # Update the particle
-            self.p[:, i] = smart_plus_2d(self.p[:, i], noisy_control)
+            self.p[:, i] = smart_plus_2d(self.p[:, i].copy(), noisy_control)
 
     @staticmethod
     def update_weights(w, obs_logp):
@@ -274,12 +267,12 @@ class slam_t:
         Given the observation log-probability and the weights of particles w, calculate the
           new weights as discussed in the writeup. Make sure that the new weights are normalized
         """
-        #### DONE: XXXXXXXXXXX
+        #### Done and Checked: XXXXXXXXXXX
 
         # Parse the observation log-probability
-        w = w * np.exp(obs_logp - slam_t.log_sum_exp(obs_logp))
-        w = w / np.sum(w)
-
+        w = obs_logp + np.log(w)
+        w -= slam_t.log_sum_exp(w)
+        w = np.exp(w)
         return w
 
     def observation_step(self, t):
@@ -305,8 +298,9 @@ class slam_t:
 
         # (a) Find the head, neck angle at t
         #     This is the same for every particle
-        head_angle = self.joint['head_angles'][0, self.find_joint_t_idx_from_lidar(self.lidar[t]['t'])]
-        neck_angle = self.joint['head_angles'][1, self.find_joint_t_idx_from_lidar(self.lidar[t]['t'])]
+        neck_angle = self.joint['head_angles'][0, self.find_joint_t_idx_from_lidar(self.lidar[t]['t'])]
+        head_angle = self.joint['head_angles'][1, self.find_joint_t_idx_from_lidar(self.lidar[t]['t'])]
+        # neck_angle, head_angle = self.joint['head_angles'][:, self.find_joint_t_idx_from_lidar(self.lidar[t]['t'])]
 
         obs_logp = np.zeros(self.n)  # Observation log-probability for each particle
         for i in range(self.n):
@@ -314,49 +308,49 @@ class slam_t:
             # self.p stores the particles used for estimating the robot pose with PF
             # self.lidar[t]['scan'] is the distance measurements from the lidar at time t
             p = self.p[:, i].reshape((3, 1))
-            world_frame_points = self.rays2world(p, self.lidar[t]['scan'], head_angle, neck_angle,
-                                                 self.lidar_angles)
+            world_frame_points = self.rays2world(p, self.lidar[t]['scan'], head_angle, neck_angle, self.lidar_angles)
 
-            # (c) Calculate which cells are obstacles and the observation log-probability
-            # We need to loop through each laser point in world_frame_points for every particle
-            # and update the map.log_odds and map.cells
-            for j in range(world_frame_points.shape[1]):
-                # Get the grid cell indices
-                grid_cell = self.map.grid_cell_from_xy(world_frame_points[0, j], world_frame_points[1, j])
+            # (c) Calculate the grid cell indices of the occupied cells
+            occupied_cells = self.map.grid_cell_from_xy(world_frame_points[0], world_frame_points[1])
 
-                # Update the map.log_odds
-                # The points being looped here are all occupied
-                self.map.log_odds[grid_cell[0], grid_cell[1]] += self.lidar_log_odds_occ
-                self.map.log_odds[grid_cell[0], grid_cell[1]] = np.clip(self.map.log_odds[grid_cell[0], grid_cell[1]],
-                                                                        -self.map.log_odds_max,
-                                                                        self.map.log_odds_max)
-                obs_logp[i] += self.lidar_log_odds_occ
+            # (c) Calculate the observation log-probability
+            obs_logp[i] = np.sum(self.map.log_odds[occupied_cells[0], occupied_cells[1]])
 
         # Update the particle weights using observation log-probability
         self.w = self.update_weights(self.w, obs_logp)
 
         # Find the particle with the largest weight
-        max_weight_particle = np.argmax(self.w)
-        best_particle_world_points = self.rays2world(self.p[:, max_weight_particle].reshape((3, 1)), self.lidar[t]['scan'], head_angle,
-                                                     neck_angle, self.lidar_angles)
+        max_weight_particle_index = np.argmax(self.w)
+        max_weight_particle = self.p[:, max_weight_particle_index]
+        self.estimated_pose = max_weight_particle
+
+        # Transform to world frame coordinates
+        best_particle_world_points_coord = self.rays2world(max_weight_particle.reshape((3, 1)),
+                                                           self.lidar[t]['scan'], head_angle,
+                                                           neck_angle, self.lidar_angles)
+
+        # Compute the grid cell indices of the occupied cells
+        occupied_cells_idx_x, occupied_cells_idx_y = self.map.grid_cell_from_xy(best_particle_world_points_coord[0], best_particle_world_points_coord[1])
 
         # Update the map.cells using the occupied cells of the particle with the largest weight
-        for j in range(best_particle_world_points.shape[1]):
-            grid_cell = self.map.grid_cell_from_xy(best_particle_world_points[0, j], best_particle_world_points[1, j])
-            self.map.cells[grid_cell[0], grid_cell[1]] = 1
+        # Find free cells
+        limit_x_coord = np.array([max_weight_particle[0] - self.lidar_dmax / 2,
+                                  max_weight_particle[0] + self.lidar_dmax / 2, max_weight_particle[0]])
+        limit_y_coord = np.array([max_weight_particle[1] - self.lidar_dmax / 2,
+                                  max_weight_particle[1] + self.lidar_dmax / 2, max_weight_particle[1]])
+        limit_grid_x, limit_grid_y = self.map.grid_cell_from_xy(limit_x_coord, limit_y_coord)
+        free_cells_x = np.ndarray.flatten(
+            np.linspace([limit_grid_x[2]] * len(occupied_cells_idx_x), occupied_cells_idx_x,
+                        endpoint=False).astype(int))
+        free_cells_y = np.ndarray.flatten(
+            np.linspace([limit_grid_y[2]] * len(occupied_cells_idx_y), occupied_cells_idx_y,
+                        endpoint=False).astype(int))
 
         # Update map.log_odds using the largest weight particle
         # i.e. add log_odds_occ (>0) to the occupied cells
-        for j in range(best_particle_world_points.shape[1]):
-            grid_cell = self.map.grid_cell_from_xy(best_particle_world_points[0, j], best_particle_world_points[1, j])
-            self.map.log_odds[grid_cell[0], grid_cell[1]] += self.lidar_log_odds_occ
-            self.map.log_odds[grid_cell[0], grid_cell[1]] = np.clip(self.map.log_odds[grid_cell[0], grid_cell[1]],
-                                                                    -self.map.log_odds_max,
-                                                                    self.map.log_odds_max)
-
-        # Update all map.log_odds
-        # i.e. add log_odds_free (<0) to all cells (both occupied and free)
-        self.map.log_odds += self.lidar_log_odds_free
+        # and add log_odds_free (<0) to the free cells
+        self.map.log_odds[occupied_cells_idx_x, occupied_cells_idx_y] += self.lidar_log_odds_occ
+        self.map.log_odds[free_cells_x, free_cells_y] += self.lidar_log_odds_free
         self.map.log_odds = np.clip(self.map.log_odds, -self.map.log_odds_max, self.map.log_odds_max)
 
         # Update map.cells using the updated map.log_odds (binarize the map)
