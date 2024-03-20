@@ -171,13 +171,11 @@ def run_slam(src_dir, log_dir, idx, split):
     plt.savefig(os.path.join(log_dir, 'slam_map_%s_%02d.jpg' % (split, idx)), dpi=500)  # Save map plot
     plt.close(fig)  # Close figure
 
-    return slam
-
 
 @click.command()
 @click.option('--src_dir', default='./', help='data directory', type=str)
 @click.option('--log_dir', default='logs', help='directory to save logs', type=str)
-@click.option('--idx', default='0', help='dataset number', type=int)
+@click.option('--idx', default='3', help='dataset number', type=int)
 @click.option('--split', default='train', help='train/test split', type=str)
 @click.option('--mode', default='slam',
               help='choices: dynamics OR observation OR slam', type=str)
@@ -198,9 +196,18 @@ def main(src_dir, log_dir, idx, split, mode):
         run_observation_step(src_dir, log_dir, idx, split)
         sys.exit(0)
     else:
-        p = run_slam(src_dir, log_dir, idx, split)
-        return p
+        run_slam(src_dir, log_dir, idx, split)
 
 
 if __name__ == '__main__':
+    # If not testing
     main()
+
+    # # If testing
+    # import cProfile
+    # cProfile.run('main()', 'main.prof')
+    # import pstats
+    # p = pstats.Stats('main.prof')
+    # p.sort_stats('cumulative').print_stats(10)
+
+
