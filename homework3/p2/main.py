@@ -160,10 +160,12 @@ def run_slam(src_dir, log_dir, idx, split):
     fig = plt.figure()
     bound = np.where(slam.map.cells > 0.5)  # Occupied cells
     pose_x, pose_y = slam.map.grid_cell_from_xy(estimated_pose[:, 0], estimated_pose[:, 1])  # Convert pose to grid cell
-    plt.plot(pose_x, pose_y, 'r')  # Plot estimated pose
-    plt.plot(bound[0], bound[1], 'k.')  # Plot occupied cells
+    plt.plot(pose_x, pose_y, 'r', markersize=0.5)  # Plot estimated pose
+    plt.plot(bound[0], bound[1], 'k.', markersize=0.5)  # Plot occupied cells
     plt.xlim([0, slam.map.szx])
-    plt.xlim([0, slam.map.szx])
+    plt.ylim([0, slam.map.szy])
+    # plt.axis('equal')
+    plt.gca().set_aspect('equal', adjustable='box')
     plt.title('SLAM Map')
     plt.savefig(os.path.join(log_dir, 'slam_map_%s_%02d.jpg' % (split, idx)))  # Save map plot
     plt.close(fig)  # Close figure
