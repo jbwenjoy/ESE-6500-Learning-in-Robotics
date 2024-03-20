@@ -1,4 +1,4 @@
-# ESE-6500 Homeworks
+# Portfolio of robot learning algorithms from ESE-6500@UPenn
 
 ---
 
