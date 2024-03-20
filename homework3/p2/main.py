@@ -56,8 +56,9 @@ def run_dynamics_step(src_dir, log_dir, idx, split, t0=0, draw_fig=False):
 
     plt.plot(ps[0], ps[1], '*c')
     plt.title('Trajectory using PF')
+    plt.axis('equal')
     logging.info('> Saving plot in ' + os.path.join(log_dir, 'dynamics_only_%s_%02d.jpg' % (split, idx)))
-    plt.savefig(os.path.join(log_dir, 'dynamics_only_%s_%02d.jpg' % (split, idx)))
+    plt.savefig(os.path.join(log_dir, 'dynamics_only_%s_%02d.jpg' % (split, idx)), dpi=300)
 
 
 def run_observation_step(src_dir, log_dir, idx, split, is_online=False):
@@ -167,7 +168,7 @@ def run_slam(src_dir, log_dir, idx, split):
     # plt.axis('equal')
     plt.gca().set_aspect('equal', adjustable='box')
     plt.title('SLAM Map')
-    plt.savefig(os.path.join(log_dir, 'slam_map_%s_%02d.jpg' % (split, idx)))  # Save map plot
+    plt.savefig(os.path.join(log_dir, 'slam_map_%s_%02d.jpg' % (split, idx)), dpi=500)  # Save map plot
     plt.close(fig)  # Close figure
 
     return slam
