@@ -155,19 +155,45 @@ class slam_t:
         # If we enter this function, we need to resample the particles as it falls below the threshold
         # print('Resampling')
 
-        particles_slam = p.T
-        weights_slam = (w*len(w)*10).astype(int)
+        # particles_slam = p.T
+        # weights_slam = (w*len(w)*10).astype(int)
+        #
+        # circular_list = np.vstack((np.repeat(particles_slam[:, 0], weights_slam),
+        #                            np.repeat(particles_slam[:, 1], weights_slam),
+        #                            np.repeat(particles_slam[:, 2], weights_slam)))
+        # indexes = np.random.uniform(
+        #     0, circular_list.shape[0], len(w)).astype(int)
+        # resampled_particles = circular_list[:, indexes]
+        # resampled_weights = np.ones(
+        #     len(resampled_particles[0]))/len(resampled_particles[0])
+        #
+        # return resampled_particles, resampled_weights
 
-        circular_list = np.vstack((np.repeat(particles_slam[:, 0], weights_slam),
-                                   np.repeat(particles_slam[:, 1], weights_slam),
-                                   np.repeat(particles_slam[:, 2], weights_slam)))
-        indexes = np.random.uniform(
-            0, circular_list.shape[0], len(w)).astype(int)
-        resampled_particles = circular_list[:, indexes]
-        resampled_weights = np.ones(
-            len(resampled_particles[0]))/len(resampled_particles[0])
+        # Get the number of particles
+        n = w.shape[0]
 
-        return resampled_particles, resampled_weights
+        # Get the cumulative sum of the weights
+        cum_sum = np.cumsum(w)
+
+        # Generate the random numbers
+        # r is uniformly distributed random numbers between 0 and 1/n
+        r = (np.random.rand() + np.arange(n)) / n
+
+        # Initialize the new particles and weights
+        new_p = np.zeros(p.shape)
+        new_w = np.zeros(n)
+
+        # Resample the particles
+        i, j = 0, 0
+        while i < n:
+            if r[i] < cum_sum[j]:
+                new_p[:, i] = p[:, j]
+                new_w[i] = 1 / n
+                i += 1
+            else:
+                j += 1
+
+        return new_p, new_w
 
 
     @staticmethod

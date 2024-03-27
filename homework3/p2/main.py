@@ -175,7 +175,7 @@ def run_slam(src_dir, log_dir, idx, split):
 @click.command()
 @click.option('--src_dir', default='./', help='data directory', type=str)
 @click.option('--log_dir', default='logs', help='directory to save logs', type=str)
-@click.option('--idx', default='3', help='dataset number', type=int)
+@click.option('--idx', default='0', help='dataset number', type=int)
 @click.option('--split', default='train', help='train/test split', type=str)
 @click.option('--mode', default='slam',
               help='choices: dynamics OR observation OR slam', type=str)
