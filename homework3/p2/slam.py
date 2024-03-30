@@ -146,8 +146,8 @@ class slam_t:
     @staticmethod
     def stratified_resampling(p, w):
         """
-        resampling step of the particle filter, takes p = (3 x n) array of
-        particles with w = (1 x n) array of weights and returns new particle
+        resampling step of the particle filter, takes p = (3,n) array of
+        particles with w = (n,) array of weights and returns new particle
         locations (number of particles n remains the same) and their weights
         """
         #### DONE: XXXXXXXXXXX

@@ -12,7 +12,7 @@ import cv2
 
 
 def load_colmap_data():
-    r"""
+    """
     After using colmap2nerf.py to convert the colmap intrinsics and extrinsics,
     read in the transform_colmap.json file
 
@@ -23,25 +23,103 @@ def load_colmap_data():
 
     NOTES:
       We recommend you resize the original images from 800x800 to lower resolution,
-      i.e. 200x200 so it's easier for training. Change camera parameters accordingly
+      i.e. 200x200, so it's easier for training. Change camera parameters accordingly
     """
-    ################### YOUR CODE START ###################
-    pass
-    ################### YOUR CODE END ###################
+    ## Implemented
+
+    with open(os.path.join('transforms_train.json')) as file:
+        json_data = json.load(file)
+
+    # rescaling camera parameters
+    original_h, original_w = 800, 800
+    new_h, new_w = 200, 200
+
+    camera_angle_x = json_data['camera_angle_x']
+    focal_length = 0.5 * original_w / np.tan(0.5 * camera_angle_x)
+    focal_resized = focal_length * (new_w / original_w)
+
+    img_file_paths = []
+    rotations = []
+    poses = []
+    imgs = []
+    for frame in json_data['frames']:
+        img_file_paths.append(frame['file_path'] + ".png")
+        rotations.append(frame['rotation'])
+        poses.append(frame['transform_matrix'])
+
+        img = cv2.imread(frame['file_path'] + ".png")
+        if img is None:
+            print(f"Image {frame['file_path'] + '.png'} not found")
+            continue
+        img = cv2.resize(img, (new_w, new_h))
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        img = img / 255.0
+        imgs.append(img)
+
+    imgs = np.array(imgs)
+    poses = np.array(poses)
+    H, W = new_h, new_w
+    focal_length = focal_resized
+
+    return imgs, poses, [H, W, focal_length]
 
 
-def get_rays():
-    r"""Compute rays passing through each pixels
+def get_rays(H, W, f, T_wc):
+    """
+    Compute rays passing through each pixel.
+
+    Parameters:
+        H: height of the image
+        W: width of the image
+        f: focal length of the camera
+        T_wc: camera pose of 1 image, shape (4, 4)
 
     Expected Returns:
-      ray_origins: A tensor of shape (H, W, 3) denoting the centers of each ray.
-      ray_directions: A tensor of shape (H, W, 3) denoting the direction of each 
-        ray. ray_directions[i][j] denotes the direction (x, y, z) of the ray 
-        passing through the pixel at row index `i` and column index `j`.
+        ray_origins: A tensor of shape (H, W, 3) denoting the centers of each ray.
+        ray_directions: A tensor of shape (H, W, 3) denoting the direction of each
+            ray. ray_directions[i][j] denotes the direction (x, y, z) of the ray
+            passing through the pixel at row index `i` and column index `j`.
     """
-    ################### YOUR CODE START ###################
-    pass
-    ################### YOUR CODE END ###################
+    ## Implemented
+
+    # Compute the intrinsic matrix K
+    K = np.array([[f, 0, W / 2],
+                  [0, f, H / 2],
+                  [0, 0, 1]])
+
+    # Create a meshgrid for pixel coordinates
+    i, j = np.meshgrid(np.arange(W), np.arange(H), indexing='xy')
+
+    # Convert 2D pixel coordinates to 3D homogeneous pixel coordinates
+    pixel_coordinates = np.stack([i, j, np.ones_like(i)], axis=-1)
+
+    # Reshape pixel coordinates to tensor (H*W, 3)
+    pixel_coordinates = np.reshape(pixel_coordinates, (-1, 3))
+
+    # Get camera coordinates
+    K_inv = np.linalg.inv(K)
+    camera_coordinates = (K_inv @ pixel_coordinates.T).T
+
+    # Convert camera coordinates to homogeneous coordinates
+    camera_coordinates = np.concatenate([camera_coordinates, np.ones((H * W, 1))], axis=1)
+
+    # Get world coordinates
+    world_coordinates = (T_wc @ camera_coordinates.T).T
+
+    # Calculate ray origins (camera position in the world frame)
+    ray_origins = T_wc[:3, -1].reshape(1, 3)
+
+    # Calculate ray directions (world_coordinates - camera position)
+    ray_directions = world_coordinates[:, :3] - ray_origins
+
+    # Normalize ray directions
+    ray_directions /= np.linalg.norm(ray_directions, axis=1, keepdims=True)
+
+    # Reshape rays to match the (H, W, 3) shape
+    ray_origins = np.tile(ray_origins, (H * W, 1)).reshape(H, W, 3)
+    ray_directions = ray_directions.reshape(H, W, 3)
+
+    return ray_origins, ray_directions
 
 
 def sample_points_from_rays():
@@ -51,9 +129,8 @@ def sample_points_from_rays():
       sampled_points: axis of the sampled points along each ray, shape (H, W, num_samples, 3)
       depth_values: sampled depth values along each ray, shape (H, W, num_samples)
     """
-    ################### YOUR CODE START ###################
+    # TODO: sample_points_from_rays
     pass
-    ################### YOUR CODE END ###################
 
 
 def positional_encoding():
@@ -66,9 +143,8 @@ def positional_encoding():
       pos_out: positional encoding of the input tensor. 
                (H*W*num_samples, (include_input + 2*freq) * 3)
     """
-    ################### YOUR CODE START ###################
+    # TODO: positional_encoding
     pass
-    ################### YOUR CODE END ###################
 
 
 def volume_rendering(
@@ -88,9 +164,8 @@ def volume_rendering(
     Expected Returns:
       rgb_map: rendered RGB image, shape (H, W, 3)
     """
-    ################### YOUR CODE START ###################
+    # TODO: volume_rendering
     pass
-    ################### YOUR CODE END ###################
 
 
 class TinyNeRF(torch.nn.Module):
@@ -230,5 +305,16 @@ def train(images, poses, hwf, near_point,
 
 
 if __name__ == "__main__":
+
+    # Load data
+    imgs, poses, camera_hwf = load_colmap_data()
+
+    # Test if the images are loaded correctly
+    # plt.imshow(imgs[0])
+    # plt.show()
+
+    # get rays
+    ray_origins, ray_directions = get_rays(*camera_hwf, poses[0])
+
     # TODO
     pass
