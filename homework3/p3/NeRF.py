@@ -1,6 +1,6 @@
 from typing import Optional, Tuple
 import torch
-from torch import nn
+from torch import nn, Tensor
 from torch.nn import functional as F
 import numpy as np
 import matplotlib.pyplot as plt
@@ -48,13 +48,27 @@ def load_colmap_data():
         # poses.append(frame['transform_matrix'])
         poses.append(torch.tensor(frame['transform_matrix'], dtype=torch.float32))
 
-        img = cv2.imread(frame['file_path'] + ".png")
+        # See if frame['file_path'] + ".png" exists
+        if not os.path.exists(frame['file_path'] + ".png"):
+            print(f"Image {frame['file_path'] + '.png'} not found")
+            continue
+        img = cv2.imread(frame['file_path'] + ".png", )
+        # print(np.max(img))
         if img is None:
             print(f"Image {frame['file_path'] + '.png'} not found")
             continue
-        img = cv2.resize(img, (new_w, new_h))
+
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        # img = img / 255.0
+
+        # print(img.shape)
+        # print(img.size)
+        # print(img.dtype)
+        # print(img)
+        # plt.imshow(img)
+        # plt.show()
+
+        img = cv2.resize(img, (new_w, new_h))
+
         img = torch.tensor(img / 255.0, dtype=torch.float32)  # Convert to tensor
         imgs.append(img)
 
@@ -87,21 +101,26 @@ def get_rays(H, W, f, T_wc):
     """
     ## Implemented
 
+    device = T_wc.device
+
     # Compute the intrinsic matrix K
     # K = np.array([[f, 0, W / 2],
     #               [0, f, H / 2],
     #               [0, 0, 1]])
     K = torch.tensor([[f, 0, W / 2],
                       [0, f, H / 2],
-                      [0, 0, 1]], dtype=torch.float32)
+                      [0, 0, 1]],
+                     dtype=torch.float32,
+                     device=device)
 
     # Create a meshgrid for pixel coordinates
     # i, j = np.meshgrid(np.arange(W), np.arange(H), indexing='xy')
-    i, j = torch.meshgrid(torch.arange(W, dtype=torch.float32), torch.arange(H, dtype=torch.float32), indexing='xy')
+    i, j = torch.meshgrid(torch.arange(W, dtype=torch.float32, device=device),
+                          torch.arange(H, dtype=torch.float32, device=device), indexing='xy')
 
     # Convert 2D pixel coordinates to 3D homogeneous pixel coordinates
     # pixel_coordinates = np.stack([i, j, np.ones_like(i)], axis=-1)
-    pixel_coordinates = torch.stack([i, j, torch.ones_like(i)], axis=-1)
+    pixel_coordinates = torch.stack([i, j, torch.ones_like(i)], dim=-1)
 
     # Reshape pixel coordinates to tensor (H*W, 3)
     # pixel_coordinates = np.reshape(pixel_coordinates, (-1, 3))
@@ -115,7 +134,7 @@ def get_rays(H, W, f, T_wc):
 
     # Convert camera coordinates to homogeneous coordinates
     # camera_coordinates = np.concatenate([camera_coordinates, np.ones((H * W, 1))], axis=1)
-    camera_coordinates = torch.cat([camera_coordinates, torch.ones((H * W, 1), dtype=torch.float32)], dim=1)
+    camera_coordinates = torch.cat([camera_coordinates, torch.ones((H * W, 1), dtype=torch.float32, device=device)], dim=1)
 
     # Get world coordinates
     # world_coordinates = (T_wc @ camera_coordinates.T).T
@@ -225,7 +244,7 @@ def volume_rendering(
     radiance_field: torch.Tensor,
     ray_origins: torch.Tensor,
     depth_values: torch.Tensor
-) -> Tuple[torch.Tensor]:
+) -> torch.Tensor:
     """
     Differentiably renders a radiance field, given the origin of each ray in the
     bundle, and the sampled depth values along them.
@@ -241,27 +260,28 @@ def volume_rendering(
     """
     # TODO: volume_rendering
 
-    H, W, num_samples, _ = radiance_field.shape
     device = radiance_field.device
+
+    H, W, num_samples, _ = radiance_field.shape
 
     # Extract RGB and sigma from radiance field
     rgb = radiance_field[..., :3]  # (H, W, num_samples, 3)
     sigma = radiance_field[..., 3]  # (H, W, num_samples)
 
-    # Calculate the length of each ray segment
+    # Calculate the length of each ray segment (s_jp1 - s_j)
     delta = depth_values[..., 1:] - depth_values[..., :-1]  # (H, W, num_samples-1)
     # delta = torch.cat([delta, torch.ones((H, W, 1)).to(device)], dim=-1)
-    delta = torch.cat([delta, torch.Tensor([1e10]).expand(delta[..., :1].shape).to(device)],-1)  # add a very large value to the end
+    delta = torch.cat([delta, torch.Tensor([1e10]).expand(delta[..., :1].shape).to(device)], dim=-1)  # add a very large value to the end
 
     # Calculate opacities (alpha values)
     alpha = 1.0 - torch.exp(-sigma * delta)  # (H, W, num_samples)
 
-    # Calculate transmittance (product of 1 - alpha values)
+    # Calculate transmittance (p(s_i), product of 1 - alpha values)
     # We use a cumulative product, so we need to use cumprod() on (1 - alpha)
-    T = torch.cumprod(torch.cat([torch.ones((H, W, 1)).to(device), 1.0 - alpha + 1e-10], -1), -1)[:, :, :-1]  # (H, W, num_samples)
+    p_s_i = torch.cumprod(torch.cat([torch.ones((H, W, 1)).to(device), 1.0 - alpha + 1e-10], -1), -1)[:, :, :-1]  # (H, W, num_samples)
 
     # Calculate weights
-    weights = alpha * T  # (H, W, num_samples)
+    weights = alpha * p_s_i  # (H, W, num_samples)
 
     # Render the RGB image by weighted sum of RGB colors along the rays
     rgb_map = torch.sum(weights[..., None] * rgb, -2)  # (H, W, 3)
@@ -332,30 +352,43 @@ def nerf_step_forward(height, width, focal_length, trans_matrix,
         rgb_predicted: predicted rgb values of the training image
     """
     ################### YOUR CODE START ###################
-    # TODO: Get the "bundle" of rays through all image pixels
 
-    # TODO: Sample points along each ray
+    # Get the "bundle" of rays through all image pixels
+    ray_origins, ray_directions = get_rays(height, width, focal_length, trans_matrix)
 
-    # TODO: positional encoding, shape of return [H*W*num_samples, (include_input + 2*freq) * 3]
+    # Sample points along each ray
+    sampled_points, depth_values = sample_points_from_rays(ray_origins, ray_directions, near_point, far_point, num_depth_samples_per_ray)
+
+    # Positional encoding, shape of return [H*W*num_samples, (include_input + 2*freq) * 3]
+    logs = 10  # 2^1 to 2^10
+    include_input = True  # Include 2^0
+    pos_enc_points = positional_encoding(sampled_points, logs, include_input)  # (H, W, num_samples, 3(include_input + 2*freq))
+    # Reshape to (H*W*num_samples, 3(include_input + 2*freq))
+    pos_enc_points = pos_enc_points.reshape(-1, pos_enc_points.shape[-1])
 
     ################### YOUR CODE END ###################
 
     # Split the encoded points into "chunks", run the model on all chunks, and
     # concatenate the results (to avoid out-of-memory issues).
-    batches = get_minibatches_function(positional_encoded_points, chunksize=16384)
-    predictions = []
+    # batches = get_minibatches_function(pos_enc_points, chunksize=16384)
+    batches = get_minibatches_function(pos_enc_points, chunksize=8192)
+    rgb_predictions = []
     for batch in batches:
-        predictions.append(model(batch))
-    radiance_field_flattened = torch.cat(predictions, dim=0)  # (H*W*num_samples, 4)
+        rgb_predictions.append(model(batch))
+    radiance_field_flattened = torch.cat(rgb_predictions, dim=0)  # (H*W*num_samples, 4)
 
     # "Unflatten" the radiance field.
     unflattened_shape = [height, width, num_depth_samples_per_ray, 4]  # (H, W, num_samples, 4)
     radiance_field = torch.reshape(radiance_field_flattened, unflattened_shape)  # (H, W, num_samples, 4)
 
     ################### YOUR CODE START ###################
-    # TODO: Perform differentiable volume rendering to re-synthesize the RGB image. # (H, W, 3)
-    pass
+
+    # Perform differentiable volume rendering to re-synthesize the RGB image. # (H, W, 3)
+    rgb_predicted = volume_rendering(radiance_field, ray_origins, depth_values)
+
     ################### YOUR CODE END ###################
+
+    return rgb_predicted
 
 
 def train(images, poses, hwf, near_point,
@@ -388,6 +421,12 @@ def train(images, poses, hwf, near_point,
     torch.manual_seed(seed)
     np.random.seed(seed)
 
+    # Display parameters
+    disp_freq = 10
+    psnrs = []
+    iters = []
+    directory_path = 'logs'
+
     for _ in tqdm(range(num_iters)):
         # Randomly pick a training image as the target, get rgb value and camera pose
         train_idx = np.random.randint(n_train)
@@ -406,26 +445,80 @@ def train(images, poses, hwf, near_point,
         optimizer.step()
         optimizer.zero_grad()
 
+        # Display training progress
+        if _ % disp_freq == 0:
+
+            iters.append(_)
+
+            # Compute PSNR
+            psnr = 10 * torch.log10(1 / loss)  # Compute PSNR, convert to scalar
+            psnrs.append(psnr.cpu().detach().numpy())  # Move to cpu and convert to numpy
+
+            plt.figure(figsize=(15, 5))
+
+            # Display the PSNR curve
+            plt.subplot(1, 3, 1)
+            plt.plot(iters, psnrs)
+
+            # Display the predicted image
+            plt.subplot(1, 3, 2)
+            predicted_img = rgb_predicted.cpu().detach().numpy()
+            predicted_img = np.clip(predicted_img, 0, 1)
+            plt.imshow(predicted_img)
+            plt.title('Predicted at Iter ' + str(_))
+
+            #  Display the ground truth image
+            plt.subplot(1, 3, 3)
+            ground_truth_img = train_img_rgb.cpu().detach().numpy()
+            ground_truth_img = np.clip(ground_truth_img, 0, 1)
+            plt.imshow(ground_truth_img)
+            plt.title('Ground Truth Image')
+
+            plt.savefig(directory_path + '/training_progress_' + str(_) + '.png')
+            plt.show()
+
     print('Finish training')
 
 
 if __name__ == "__main__":
 
+    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
     # Load data
     imgs, poses, camera_hwf = load_colmap_data()
 
+    ## Test code
+
     # Test if the images are loaded correctly
-    # plt.imshow(imgs[0])
-    # plt.show()
+    plt.imshow(imgs[0])
+    plt.show()
 
-    # get rays
-    ray_origins, ray_directions = get_rays(*camera_hwf, poses[0])
+    # Test get_rays
+    # ray_origins, ray_directions = get_rays(*camera_hwf, poses[0])
 
-    # sample points
-    sampled_points, depth_values = sample_points_from_rays(ray_origins, ray_directions, 2, 6, 64)
+    # Test sample_points_from_rays
+    # sampled_points, depth_values = sample_points_from_rays(ray_origins, ray_directions, 2, 6, 64)
 
-    # positional encoding
-    pos_enc = positional_encoding(sampled_points, 10)
+    # Test positional_encoding
+    # pos_enc = positional_encoding(sampled_points, 10)
 
-    # TODO
-    pass
+    ## Main code continues here
+
+    imgs = imgs.to(DEVICE)
+    poses = poses.to(DEVICE)
+
+    # Define the parameters
+    near_point = 2.0
+    far_point = 6.0
+    num_depth_samples_per_ray = 64
+    max_iters = 100
+    # Positional encoding parameters
+    max_freq_log2 = 10
+    include_input = True
+    pos_dim = 3 * (1 + 2 * max_freq_log2) if include_input else 3 * 2 * max_freq_log2
+
+    # Initialize the model
+    model = TinyNeRF(pos_dim).to(DEVICE)
+
+    # Train the model
+    train(imgs, poses, camera_hwf, near_point, far_point, num_depth_samples_per_ray, max_iters, model, DEVICE=DEVICE)
