@@ -269,22 +269,24 @@ def volume_rendering(
     sigma = radiance_field[..., 3]  # (H, W, num_samples)
 
     # Calculate the length of each ray segment (s_jp1 - s_j)
-    delta = depth_values[..., 1:] - depth_values[..., :-1]  # (H, W, num_samples-1)
-    # delta = torch.cat([delta, torch.ones((H, W, 1)).to(device)], dim=-1)
-    delta = torch.cat([delta, torch.Tensor([1e10]).expand(delta[..., :1].shape).to(device)], dim=-1)  # add a very large value to the end
+    # delta = depth_values[..., 1:] - depth_values[..., :-1]  # (H, W, num_samples-1)
+    # # delta = torch.cat([delta, torch.ones((H, W, 1)).to(device)], dim=-1)
+    # delta = torch.cat([delta, torch.Tensor([1e10]).expand(delta[..., :1].shape).to(device)], dim=-1)  # add a very large value to the end
+    delta_i = 1e10 * torch.ones_like(depth_values).to(device)
+    delta_i[..., :-1] = torch.diff(depth_values, dim=-1)
 
     # Calculate opacities (alpha values)
-    alpha = 1.0 - torch.exp(-sigma * delta)  # (H, W, num_samples)
+    alpha = 1.0 - torch.exp(-sigma * delta_i)  # (H, W, num_samples)
 
     # Calculate transmittance (p(s_i), product of 1 - alpha values)
     # We use a cumulative product, so we need to use cumprod() on (1 - alpha)
-    p_s_i = torch.cumprod(torch.cat([torch.ones((H, W, 1)).to(device), 1.0 - alpha + 1e-10], -1), -1)[:, :, :-1]  # (H, W, num_samples)
+    cum_prod = torch.cumprod(1.0 - alpha, dim=-1)  # (H, W, num_samples)
 
     # Calculate weights
-    weights = alpha * p_s_i  # (H, W, num_samples)
+    weights = alpha * cum_prod  # (H, W, num_samples)
 
     # Render the RGB image by weighted sum of RGB colors along the rays
-    rgb_map = torch.sum(weights[..., None] * rgb, -2)  # (H, W, 3)
+    rgb_map = torch.sum(weights[..., None] * rgb, dim=-2)  # (H, W, 3)
 
     return rgb_map
 
@@ -332,7 +334,7 @@ def get_minibatches(inputs: torch.Tensor, chunksize: Optional[int] = 1024 * 8):
 
 def nerf_step_forward(height, width, focal_length, trans_matrix,
                       near_point, far_point, num_depth_samples_per_ray,
-                      get_minibatches_function, model):
+                      chunksize, model):
     """
     Perform one iteration of training, which take information of one of the
     training images, and try to predict its rgb values
@@ -360,9 +362,9 @@ def nerf_step_forward(height, width, focal_length, trans_matrix,
     sampled_points, depth_values = sample_points_from_rays(ray_origins, ray_directions, near_point, far_point, num_depth_samples_per_ray)
 
     # Positional encoding, shape of return [H*W*num_samples, (include_input + 2*freq) * 3]
-    logs = 10  # 2^1 to 2^10
+    num_x_freqs = 10  # 2^1 to 2^10
     include_input = True  # Include 2^0
-    pos_enc_points = positional_encoding(sampled_points, logs, include_input)  # (H, W, num_samples, 3(include_input + 2*freq))
+    pos_enc_points = positional_encoding(sampled_points, num_x_freqs, include_input)  # (H, W, num_samples, 3(include_input + 2*freq))
     # Reshape to (H*W*num_samples, 3(include_input + 2*freq))
     pos_enc_points = pos_enc_points.reshape(-1, pos_enc_points.shape[-1])
 
@@ -370,8 +372,8 @@ def nerf_step_forward(height, width, focal_length, trans_matrix,
 
     # Split the encoded points into "chunks", run the model on all chunks, and
     # concatenate the results (to avoid out-of-memory issues).
-    # batches = get_minibatches_function(pos_enc_points, chunksize=16384)
-    batches = get_minibatches_function(pos_enc_points, chunksize=8192)
+    batches = get_minibatches(pos_enc_points, chunksize)
+
     rgb_predictions = []
     for batch in batches:
         rgb_predictions.append(model(batch))
@@ -393,7 +395,7 @@ def nerf_step_forward(height, width, focal_length, trans_matrix,
 
 def train(images, poses, hwf, near_point,
           far_point, num_depth_samples_per_ray,
-          num_iters, model, DEVICE="cuda"):
+          num_iters, model, chunksize, DEVICE="cuda"):
     """
     Training a tiny nerf model
 
@@ -437,13 +439,17 @@ def train(images, poses, hwf, near_point,
         rgb_predicted = nerf_step_forward(H, W, focal_length,
                                           train_pose, near_point,
                                           far_point, num_depth_samples_per_ray,
-                                          get_minibatches, model)
+                                          chunksize, model)
 
         # Compute mean-squared error between the predicted and target images
         loss = torch.nn.functional.mse_loss(rgb_predicted, train_img_rgb)
         loss.backward()
         optimizer.step()
         optimizer.zero_grad()
+
+        # Print the loss at every step
+        # print(f"Iter: {_}, Loss: {loss.item()}")
+
 
         # Display training progress
         if _ % disp_freq == 0:
@@ -490,8 +496,8 @@ if __name__ == "__main__":
     ## Test code
 
     # Test if the images are loaded correctly
-    plt.imshow(imgs[0])
-    plt.show()
+    # plt.imshow(imgs[0])
+    # plt.show()
 
     # Test get_rays
     # ray_origins, ray_directions = get_rays(*camera_hwf, poses[0])
@@ -508,9 +514,10 @@ if __name__ == "__main__":
     poses = poses.to(DEVICE)
 
     # Define the parameters
-    near_point = 2.0
-    far_point = 6.0
+    near_point = 0.5
+    far_point = 2.0
     num_depth_samples_per_ray = 64
+    chunksize = 8192
     max_iters = 100
     # Positional encoding parameters
     max_freq_log2 = 10
@@ -521,4 +528,4 @@ if __name__ == "__main__":
     model = TinyNeRF(pos_dim).to(DEVICE)
 
     # Train the model
-    train(imgs, poses, camera_hwf, near_point, far_point, num_depth_samples_per_ray, max_iters, model, DEVICE=DEVICE)
+    train(imgs, poses, camera_hwf, near_point, far_point, num_depth_samples_per_ray, max_iters, model, chunksize=chunksize, DEVICE=DEVICE)
