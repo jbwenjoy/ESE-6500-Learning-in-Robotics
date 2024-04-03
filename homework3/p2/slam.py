@@ -131,7 +131,7 @@ class slam_t:
         # lidar_log_odds_free: value by which we should decrease the log_odds for free cells
         # (which are all cells that are not occupied)
         self.lidar_log_odds_occ = np.log(9)
-        self.lidar_log_odds_free = np.log(1 / 9.)
+        self.lidar_log_odds_free = -np.log(9)
 
     def init_particles(self, n=100, p=None, w=None, t0=0):
         """
@@ -154,20 +154,6 @@ class slam_t:
 
         # If we enter this function, we need to resample the particles as it falls below the threshold
         # print('Resampling')
-
-        # particles_slam = p.T
-        # weights_slam = (w*len(w)*10).astype(int)
-        #
-        # circular_list = np.vstack((np.repeat(particles_slam[:, 0], weights_slam),
-        #                            np.repeat(particles_slam[:, 1], weights_slam),
-        #                            np.repeat(particles_slam[:, 2], weights_slam)))
-        # indexes = np.random.uniform(
-        #     0, circular_list.shape[0], len(w)).astype(int)
-        # resampled_particles = circular_list[:, indexes]
-        # resampled_weights = np.ones(
-        #     len(resampled_particles[0]))/len(resampled_particles[0])
-        #
-        # return resampled_particles, resampled_weights
 
         # Get the number of particles
         n = w.shape[0]
@@ -346,31 +332,30 @@ class slam_t:
         self.w = self.update_weights(self.w, obs_logp)
 
         # Find the particle with the largest weight
-        max_weight_particle_index = np.argmax(self.w)
-        max_weight_particle = self.p[:, max_weight_particle_index]
-        self.estimated_pose = max_weight_particle
+        self.estimated_pose = self.p[:, np.argmax(self.w)]  # The pose of the particle with the largest weight
 
         # Transform to world frame coordinates
-        best_particle_world_points_coord = self.rays2world(max_weight_particle.reshape((3, 1)),
+        best_particle_world_points_coord = self.rays2world(self.estimated_pose.reshape((3, 1)),
                                                            self.lidar[t]['scan'], head_angle,
                                                            neck_angle, self.lidar_angles)
 
         # Compute the grid cell indices of the occupied cells
         occupied_cells_idx_x, occupied_cells_idx_y = self.map.grid_cell_from_xy(best_particle_world_points_coord[0], best_particle_world_points_coord[1])
 
+        # Note that I learned the below method from: https://github.com/KailajeAnirudh/Robotics-Learning
         # Update the map.cells using the occupied cells of the particle with the largest weight
         # Find free cells
-        limit_x_coord = np.array([max_weight_particle[0] - self.lidar_dmax / 2,
-                                  max_weight_particle[0] + self.lidar_dmax / 2, max_weight_particle[0]])
-        limit_y_coord = np.array([max_weight_particle[1] - self.lidar_dmax / 2,
-                                  max_weight_particle[1] + self.lidar_dmax / 2, max_weight_particle[1]])
+        lim_x_lower = self.estimated_pose[0] - self.lidar_dmax / 2
+        lim_x_upper = self.estimated_pose[0] + self.lidar_dmax / 2
+        lim_y_lower = self.estimated_pose[1] - self.lidar_dmax / 2
+        lim_y_upper = self.estimated_pose[1] + self.lidar_dmax / 2
+        limit_x_coord = np.array([lim_x_lower, lim_x_upper, self.estimated_pose[0]])
+        limit_y_coord = np.array([lim_y_lower, lim_y_upper, self.estimated_pose[1]])
         limit_grid_x, limit_grid_y = self.map.grid_cell_from_xy(limit_x_coord, limit_y_coord)
-        free_cells_x = np.ndarray.flatten(
-            np.linspace([limit_grid_x[2]] * len(occupied_cells_idx_x), occupied_cells_idx_x,
-                        endpoint=False).astype(int))
-        free_cells_y = np.ndarray.flatten(
-            np.linspace([limit_grid_y[2]] * len(occupied_cells_idx_y), occupied_cells_idx_y,
-                        endpoint=False).astype(int))
+
+        free_cells_x = np.linspace([limit_grid_x[2]] * len(occupied_cells_idx_x), occupied_cells_idx_x, endpoint=False).astype(int)
+        free_cells_y = np.linspace([limit_grid_y[2]] * len(occupied_cells_idx_y), occupied_cells_idx_y, endpoint=False).astype(int)
+        free_cells_x, free_cells_y = free_cells_x.flatten(), free_cells_y.flatten()
 
         # Update map.log_odds using the largest weight particle
         # i.e. add log_odds_occ (>0) to the occupied cells
