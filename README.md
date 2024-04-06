@@ -12,4 +12,4 @@ Extended Kalman Filter, IMU calibration (commented for autograder), and Unscente
 
 ## Homework 3
 
-SLAM with Particle Filter
+Policy Iteration, SLAM with Particle Filter, Tiny NeRF
