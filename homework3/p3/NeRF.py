@@ -8,7 +8,7 @@ Original file is located at
 """
 
 '''
-This notebook is Prob3 in HW3 from ESE-6500 at UPenn
+This motebook is Prob3 in HW3 from ESE-6500 at UPenn
 Special thanks to:
   Prof. Pratik Chaudhari
   @KailajeAnirudh (https://github.com/KailajeAnirudh/Machine-Perception-Projects)
@@ -29,19 +29,19 @@ import json
 import imageio
 import cv2
 
-# from google.colab import drive
-# drive.mount('/content/drive')
-#
-# gpu_info = !nvidia-smi
-# gpu_info = '\n'.join(gpu_info)
-# if gpu_info.find('failed') >= 0:
-#   print('Not connected to a GPU')
-# else:
-#   print(gpu_info)
+from google.colab import drive
+drive.mount('/content/drive')
+
+gpu_info = !nvidia-smi
+gpu_info = '\n'.join(gpu_info)
+if gpu_info.find('failed') >= 0:
+  print('Not connected to a GPU')
+else:
+  print(gpu_info)
 
 root_path = '/content/drive/MyDrive/Colab Notebooks/'
-for i, j, k in os.walk(root_path):
-    print(i, j, k)
+for i,j,k in os.walk(root_path):
+    print(i,j,k)
 
 def load_colmap_data(root_path):
     """
@@ -67,7 +67,8 @@ def load_colmap_data(root_path):
     new_h, new_w = 200, 200
 
     camera_angle_x = json_data['camera_angle_x']
-    focal_length = 0.5 * original_w * camera_angle_x / np.tan(0.5 * camera_angle_x)
+    focal_length = 0.5 * original_w / np.tan(0.5 * camera_angle_x)
+    # focal_length = 0.5 * original_w * camera_angle_x / np.tan(0.5 * camera_angle_x)
     focal_resized = focal_length * (new_w / original_w)
 
     img_file_paths = []
@@ -529,7 +530,7 @@ def train(images, poses, hwf, near_point,
     iters = []
     directory_path = 'logs'
 
-    for _ in tqdm(range(num_iters)):
+    for _ in tqdm(range(num_iters + 1)):
         # Randomly pick a training image as the target, get rgb value and camera pose
         train_idx = np.random.randint(n_train)
         train_img_rgb = images[train_idx, ..., :3]
@@ -561,6 +562,7 @@ def train(images, poses, hwf, near_point,
             # psnrs.append(psnr.cpu().detach().numpy())  # Move to cpu and convert to numpy
 
             # Output loss
+            print(f"Iter: {_}, Loss: {loss.item()}")
             losses.append(loss.item())
 
             plt.figure(figsize=(15, 5))
@@ -660,3 +662,131 @@ train(imgs, poses, camera_hwf, near_point, far_point, num_depth_samples_per_ray,
 # Save the model
 torch.save(model.state_dict(), root_path + 'model/650tiny_nerf_original_dataset.pth')
 
+# Load this NeRF model and generates pictures at 5 random directions
+
+test_model = TinyNeRF(pos_dim).to(DEVICE)
+
+test_model_path = root_path + 'model/650tiny_nerf_original_dataset.pth'
+test_model.load_state_dict(torch.load(test_model_path))
+
+test_model.eval()
+
+# Randomly generate 5 poses. note that the pose matrces must satisfy SE(3)
+torch.manual_seed(45)
+np.random.seed(45)
+
+def spherical_to_cartesian(r, theta, phi):
+    """
+    Convert spherical coordinates to Cartesian coordinates.
+    """
+    x = r * torch.sin(phi) * torch.cos(theta)
+    y = r * torch.sin(phi) * torch.sin(theta)
+    z = r * torch.cos(phi)
+    return x, y, z
+
+def look_at(camera_position, target_position, up_direction=np.array([0, 1, 0])):
+    """
+    Generate a look-at matrix for the camera.
+    """
+    camera_position = camera_position.numpy()
+    target_position = target_position.numpy()
+    up_direction = up_direction
+
+    z_axis = (camera_position - target_position)
+    z_axis /= np.linalg.norm(z_axis)
+    x_axis = np.cross(up_direction, z_axis)
+    x_axis /= np.linalg.norm(x_axis)
+    y_axis = np.cross(z_axis, x_axis)
+
+    rotation_matrix = np.eye(4)
+    rotation_matrix[:3, :3] = np.stack([x_axis, y_axis, z_axis], axis=-1)
+    translation_matrix = np.eye(4)
+    translation_matrix[:3, 3] = -camera_position
+
+    look_at_matrix = rotation_matrix @ translation_matrix
+    return torch.tensor(look_at_matrix, dtype=torch.float)
+
+# Generate 5 camera positions focusing on the origin
+
+# Spherical coordinates
+r = 4
+theta = torch.rand(1) * 2 * np.pi  # Theta angle [0, 2pi]
+phi = torch.rand(1) * np.pi / 2 + np.pi / 2   # Phi angle [0, pi]
+
+# Convert to Cartesian coordinates
+x, y, z = spherical_to_cartesian(r, theta, phi)
+
+# Camera position
+camera_position = torch.tensor([x, y, z])
+
+# Look-at matrix pointing to the origin
+pose_matrix = look_at(camera_position, torch.tensor([0.0, 0.0, 0.0]))
+
+# Randomly pick 5 poses from training data
+random_indices = np.random.choice(poses.shape[0], 5, replace=False)
+test_pose = poses[random_indices]
+
+
+# poses now contains 5 random camera poses focusing on the origin
+# test_poses = torch.stack(test_poses)
+# print(test_poses)
+print(test_pose[0])
+test_pose[0][0, 3] *= 3.4
+test_pose[0][1, 3] *= 1.2
+test_pose[0][2, 3] *= 2.9
+
+test_pose[1][0, 3] *= 3.1
+test_pose[1][1, 3] *= 0.4
+test_pose[1][2, 3] *= 0.9
+
+test_pose[2][0, 3] *= 0.8
+test_pose[2][1, 3] *= 1.8
+test_pose[2][2, 3] *= 1.3
+
+test_pose[3] *= -0.6
+
+test_pose[4][0, 3] *= 1.8
+test_pose[4][1, 3] *= 0.7
+test_pose[4][2, 3] *= 2.9
+
+H, W, focal_length = camera_hwf
+H = int(H)
+W = int(W)
+
+# Generate 5 images
+for i in range(5):
+    predicted_img = nerf_step_forward(H, W, focal_length, test_pose[i], near_point, far_point, num_depth_samples_per_ray, chunksize, test_model)
+
+    plt.figure()
+    predicted_img = predicted_img.cpu().detach().numpy()
+    predicted_img = np.clip(predicted_img, 0, 1)
+    plt.imshow(predicted_img)
+    plt.title("Predicted image")
+
+# Use randomly generated poses
+test_poses = []
+for _ in range(5):
+    # Spherical coordinates
+    r = 4
+    theta = torch.rand(1) * 2 * np.pi  # Theta angle [0, 2pi]
+    phi = torch.rand(1) * np.pi / 2 + np.pi / 2   # Phi angle [0, pi]
+
+    # Convert to Cartesian coordinates
+    x, y, z = spherical_to_cartesian(r, theta, phi)
+
+    # Camera position
+    camera_position = torch.tensor([x, y, z])
+
+    # Look-at matrix pointing to the origin
+    test_pose = look_at(camera_position, torch.tensor([0.0, 0.0, 0.0]))
+
+    test_poses.append(test_pose)
+
+for i in range(5):
+    predicted_img = nerf_step_forward(H, W, focal_length, poses[i], near_point, far_point, num_depth_samples_per_ray, chunksize, test_model)
+
+    plt.figure()
+    predicted_img = predicted_img.cpu().detach().numpy()
+    predicted_img = np.clip(predicted_img, 0, 1)
+    plt.imshow(predicted_img)
+    plt.title("Predicted image")
