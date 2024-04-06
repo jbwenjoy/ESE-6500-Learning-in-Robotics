@@ -122,7 +122,7 @@ if __name__ == "__main__":
     plt.ylabel("$\Sigma$")
     plt.title("Covariance of $x$")
 
-    # Plot estimated a
+    # Plot estimated \hat{a} and save image
     plt.figure()
     plt.plot(a_arr)
     plt.plot(a_arr + cov_a)
@@ -132,4 +132,7 @@ if __name__ == "__main__":
     plt.xlabel("Iterations")
     plt.ylabel("$\hat{a}_k$")
     plt.title("Estimated system parameter $\hat{a}_k$")
+    plt.savefig("EKF_estimating_system_parameter_a.png")
     plt.show()
+
+

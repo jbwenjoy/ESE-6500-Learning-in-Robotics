@@ -446,12 +446,15 @@ if __name__ == "__main__":
         print("Pitch: ", pitch)
         print("Yaw: ", yaw)
 
+        # Plot the filtered results with the original data
+
         plt.figure()
         plt.plot(q_mean)  # 4D
         plt.legend(["q0", "q1", "q2", "q3"])
         plt.xlabel("Time step")
         plt.ylabel("Value")
         plt.title("$q_{mean}$")
+        plt.savefig("q_mean.png")
 
         plt.figure()
         plt.xscale("log")
@@ -461,6 +464,7 @@ if __name__ == "__main__":
         plt.xlabel("Time step")
         plt.ylabel("Value")
         plt.title("$q_{cov}$")
+        plt.savefig("q_cov.png")
 
         plt.figure()
         plt.plot(euler_mean)
@@ -468,7 +472,6 @@ if __name__ == "__main__":
         plt.xlabel("Time step")
         plt.ylabel("Value")
         plt.title("Mean of Euler Angles")
-
 
         plt.figure()
         plt.plot(gyro_rad_s)
