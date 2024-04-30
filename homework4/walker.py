@@ -93,7 +93,7 @@ class MLPActorCritic(nn.Module):
     """
     - Borrowed from OpenAI -
     """
-    def __init__(self, obs_dim, act_dim, hidden_sizes=(128, 128), activation=nn.Tanh):
+    def __init__(self, obs_dim, act_dim, hidden_sizes, activation=nn.Tanh):
         super().__init__()
 
         # policy builder depends on action space
@@ -162,17 +162,17 @@ class PPOBuffer:
         """
 
         path_slice = slice(self.path_start_idx, self.ptr)
-        self.rews = np.append(self.rew_buf[path_slice], last_val)
+        rews = np.append(self.rew_buf[path_slice], last_val)
         vals = np.append(self.val_buf[path_slice], last_val)
 
-        self.mean_rews.append(np.mean(self.rews))
+        self.mean_rews.append(np.mean(rews))
 
         # the next two lines implement GAE-Lambda advantage calculation
-        deltas = self.rews[:-1] + self.gamma * vals[1:] - vals[:-1]
+        deltas = rews[:-1] + self.gamma * vals[1:] - vals[:-1]
         self.adv_buf[path_slice] = discount_cumsum(deltas, self.gamma * self.lam)
 
         # the next line computes rewards-to-go, to be targets for the value function
-        self.ret_buf[path_slice] = discount_cumsum(self.rews, self.gamma)[:-1]
+        self.ret_buf[path_slice] = discount_cumsum(rews, self.gamma)[:-1]
 
         self.path_start_idx = self.ptr
 
@@ -198,7 +198,7 @@ class PPOBuffer:
         return {k: torch.as_tensor(v, dtype=torch.float32) for k, v in data.items()}
 
 
-class PPO():
+class PPO:
     def __init__(self, env, **hyperparameters):
 
         # update hyperparameters
@@ -275,8 +275,8 @@ class PPO():
             self.pi_optimizer.zero_grad()
             loss_pi, pi_info = self.compute_loss_pi(data)
             kl = pi_info['kl']
-            if kl > 1.5 * self.target_kl:
-                print(f"Early stop at step {i} due to max kl")
+            if kl > self.target_kl_scale * self.target_kl:
+                # print(f"Early stop at step {i} due to max kl")
                 break
             loss_pi.backward()  # compute grads
             self.pi_optimizer.step()  # update parameters
@@ -331,9 +331,9 @@ class PPO():
     def learn(self):
         # Define lists to store results at every iteration
         mean_r = []
-        stdev_r = []
+        # stdev_r = []
 
-        for epoch in range(self.epochs):
+        for epoch in tqdm(range(self.epochs)):
             # generate data and get total reward for an epoch
             epoch_reward = self.rollout()
 
@@ -343,14 +343,14 @@ class PPO():
             # Append results
             # mean_r.append(self.logger['mean_rew'])
             mean_r.append(epoch_reward)
-            stdev_r.append(self.logger['std_rew'])
+            # stdev_r.append(self.logger['std_rew'])
 
-            if (epoch + 1) % 10 == 0:
-                print("====================")
-                print(f"epochs: {epoch + 1}")
-                print(f"mean_ret: {self.logger['mean_rew']}")
-                print(f"std_ret: {self.logger['std_rew']}")
-                print("====================\n")
+            # if (epoch + 1) % 10 == 0:
+            #     print("\n")
+            #     print(f"epochs: {epoch + 1}")
+            #     print(f"mean_rew: {self.logger['mean_rew']}")
+            #     # print(f"std_ret: {self.logger['std_rew']}")
+            #     # print("\n")
 
             # Plot result and save model every a few steps
             if (epoch + 1) % self.save_freq == 0:
@@ -378,27 +378,43 @@ class PPO():
             # reset logger
             self.logger = {'rew_mean': 0, 'rew_std': 0}
 
+            # Adjust lr if necessary
+            if (epoch + 1) % self.lr_decay_freq == 0:
+                self.pi_lr *= self.lr_gamma
+                self.vf_lr *= self.lr_gamma
+                self.adjust_lr(self.pi_optimizer, self.pi_lr)
+                self.adjust_lr(self.vf_optimizer, self.vf_lr)
+                print("New pi_lr = %f" % self.pi_lr)
+                print("New vf_lr = %f" % self.vf_lr)
+
+    def adjust_lr(self, optimizer, new_lr):
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = new_lr
+
     def set_hyperparameters(self, hyperparameters):
-        self.epochs = 1000
-        self.steps_per_epoch = 2000
-        self.max_ep_len = 400
+        self.epochs = 5000
+        self.steps_per_epoch = 1000
+        self.max_ep_len = 1000
         self.gamma = 0.99
-        self.lam = 0.97
-        self.clip_ratio = 0.2
+        self.lam = 0.98
+        self.clip_ratio = 0.06
         self.target_kl = 0.01
+        self.target_kl_scale = 2.5
         self.coef_ent = 0.001
 
         self.train_pi_iters = 50
         self.train_vf_iters = 50
-        self.pi_lr = 3e-4
-        self.vf_lr = 1e-3
+        self.pi_lr = 3e-4 * 0.1
+        self.vf_lr = 1e-3 * 0.1
+        self.lr_gamma = 0.8
+        self.lr_decay_freq = 200
 
-        self.hidden = (128, 128)
-        self.activation = [nn.Tanh, nn.ReLU]
+        self.hidden = (128, 128, 128, 128)
+        self.activation = [nn.Tanh, nn.ReLU, nn.Tanh, nn.ReLU]
 
         self.flag_render = False
 
-        self.save_freq = 10
+        self.save_freq = 100
 
         self.training_path = './training/walker'
         self.data_filename = 'data'
@@ -436,7 +452,12 @@ class WalkerEnv:
         return self.get_obs_array(self.state.observation)
 
     def get_reward(self, parsed_obs):
+        """
+        Unparsed observation has 14 elements in orientations, 1 element in height and 9 elements in velocity
+        Default reward
+        """
         reward = self.state.reward
+        # reward += parsed_obs[14] * 0.05
         return reward
 
     def step(self, action):
@@ -451,6 +472,7 @@ class WalkerEnv:
 if __name__ == '__main__':
     # Setup walker environment
     r0 = np.random.RandomState(42)
+    # env = suite.load('walker', 'walk', task_kwargs={'random': r0})
     env = suite.load('walker', 'walk', task_kwargs={'random': r0})
     walker_env = WalkerEnv(env)
 
@@ -469,7 +491,10 @@ if __name__ == '__main__':
     # Train
     agent = PPO(walker_env)
     TRAIN_FLAG = False
+    RESUME_TRAINING_FLAG = True
     if TRAIN_FLAG:
+        if RESUME_TRAINING_FLAG:
+            agent.ac_model.load_state_dict(torch.load('./training/walker/ppo_walker_model.pth'))
         agent.learn()
 
     #####
@@ -495,7 +520,6 @@ if __name__ == '__main__':
                 else:
                     action = action_tensor.numpy()  # Convert only if it's a tensor
             return action
-
 
         # Launch the viewer
         viewer.launch(env, policy)
