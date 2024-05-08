@@ -59,7 +59,7 @@ def discount_cumsum(x, discount):
     return scipy.signal.lfilter([1], [1, float(-discount)], x[::-1], axis=0)[::-1]
 
 
-class MLPGaussianActor(nn.Module):
+class ActorNN(nn.Module):
     """
     A Gaussian policy implemented using a Multilayer Perceptron (MLP).
     Adapted from OpenAI's implementations.
@@ -84,7 +84,7 @@ class MLPGaussianActor(nn.Module):
         # Create the MLP network to output the mean values of the Gaussian distribution
         self.mu_net = mlp([obs_dim] + list(hidden_sizes) + [act_dim], activation)
 
-    def _distribution(self, obs):
+    def gaussian_distri(self, obs):
         """
         Create a Gaussian distribution based on the network output (mean and std).
         """
@@ -92,7 +92,7 @@ class MLPGaussianActor(nn.Module):
         std = torch.exp(self.log_std)
         return torch.distributions.normal.Normal(mu, std)
 
-    def _log_prob_from_distribution(self, pi, act):
+    def action_log_prob_from_distri(self, pi, act):
         """
         Calculate the log probability of an action given a distribution.
         """
@@ -112,19 +112,20 @@ class MLPGaussianActor(nn.Module):
         - dist: The Gaussian distribution generated from the observation.
         - logp_a: The log probability of the action (if given), otherwise None.
         """
-        dist = self._distribution(obs)
+        dist = self.gaussian_distri(obs)
         logp_a = None
 
         # action can be None or a tensor
         if action is not None:
-            logp_a = self._log_prob_from_distribution(dist, action)
+            logp_a = self.action_log_prob_from_distri(dist, action)
         return dist, logp_a
 
 
-class MLPCritic(nn.Module):
+class CriticNN(nn.Module):
     """
     The MLP Critic network.
     """
+
     def __init__(self, obs_dim, hidden_sizes, activation):
         """
         Parameters:
@@ -145,7 +146,7 @@ class MLPCritic(nn.Module):
         return torch.squeeze(self.v_net(obs), -1)
 
 
-class MLPActorCritic(nn.Module):
+class ActorCriticNN(nn.Module):
     """
     A combined Actor-Critic model.
     """
@@ -161,10 +162,10 @@ class MLPActorCritic(nn.Module):
 
         # Create the policy network (Actor), which generates actions based on observations
         # This will be a Gaussian actor that learns a distribution over actions
-        self.pi = MLPGaussianActor(obs_dim, act_dim, hidden_sizes, activation)
+        self.pi = ActorNN(obs_dim, act_dim, hidden_sizes, activation)
 
         # Create the value function
-        self.vf = MLPCritic(obs_dim, hidden_sizes, activation)
+        self.vf = CriticNN(obs_dim, hidden_sizes, activation)
 
     def step(self, obs):
         """
@@ -177,13 +178,13 @@ class MLPActorCritic(nn.Module):
         """
         with torch.no_grad():  # No need to store gradients for this step
             # Generate the Gaussian distribution for the current observation
-            distribution = self.pi._distribution(obs)
+            distribution = self.pi.gaussian_distri(obs)
             
             # Sample an action
             action = distribution.sample()
 
             # Calculate the log probability of the action
-            logp_a = self.pi._log_prob_from_distribution(distribution, action)
+            logp_a = self.pi.action_log_prob_from_distri(distribution, action)
 
             # Estimate the value of the state observation
             vf = self.vf(obs)
@@ -312,7 +313,7 @@ class PPOBuffer:
 
 
 class PPO:
-    def __init__(self, env, **hyperparameters):
+    def __init__(self, env):
         """
         Initialize the PPO training environment.
 
@@ -321,7 +322,7 @@ class PPO:
         - **hyperparameters: Additional configuration values.
         """
         # Update hyperparameters
-        self.set_hyperparameters(hyperparameters)
+        self.init_hyperparams()
 
         # Initialize Retrieve dimensions from the environment
         self.env = env
@@ -329,12 +330,12 @@ class PPO:
         self.act_dim = self.env.act_dim
 
         # Initialize the actor-critic model and optimizers
-        self.ac_model = MLPActorCritic(self.obs_dim, self.act_dim, self.hidden, self.activation)
-        self.pi_optimizer = Adam(self.ac_model.pi.parameters(), self.pi_lr)
-        self.vf_optimizer = Adam(self.ac_model.vf.parameters(), self.vf_lr)
+        self.ac_model = ActorCriticNN(self.obs_dim, self.act_dim, self.hidden, self.activation)
+        self.policyNN_optimizer = Adam(self.ac_model.pi.parameters(), self.pi_lr)
+        self.valfunNN_optimizer = Adam(self.ac_model.vf.parameters(), self.vf_lr)
 
         # Create a buffer to store training data
-        self.buf = PPOBuffer(self.obs_dim, self.act_dim, self.steps_per_epoch, self.gamma, self.lam)
+        self.buffer = PPOBuffer(self.obs_dim, self.act_dim, self.steps_per_epoch, self.gamma, self.lam)
 
         # Initialize logging and data storage
         self.logger = {'mean_rew': 0, 'std_rew': 0}
@@ -345,14 +346,14 @@ class PPO:
         # Set up the training data file
         self.column_names = ['mean', 'std']
         self.df = pd.DataFrame(columns=self.column_names, dtype=object)
-        if self.create_new_training_data:
-            self.df.to_csv(os.path.join(self.training_path, self.data_filename), mode='w', index=False)
-            print(f"new data file created: {self.data_filename}")
+        # if self.create_new_training_data:
+        #     self.df.to_csv(os.path.join(self.training_path, self.data_filename), mode='w', index=False)
+        #     print(f"new data file created: {self.data_filename}")
         
-        # Load the model if specified
-        if self.load_model:
-            self.ac_model.load_state_dict(torch.load(os.path.join(self.training_path, self.model_filename)))
-            print(f"model loaded: {self.model_filename}")
+        # # Load the model if specified
+        # if self.load_model:
+        #     self.ac_model.load_state_dict(torch.load(os.path.join(self.training_path, self.model_filename)))
+        #     print(f"model loaded: {self.model_filename}")
 
     def compute_loss_pi(self, data):
         """
@@ -376,16 +377,16 @@ class PPO:
         clip_adv = torch.clamp(ratio, 1 - self.clip_ratio, 1 + self.clip_ratio) * adv
         
         # Calculate entropy for exploration
-        ent = act_dist.entropy().mean().item()
+        entropy = act_dist.entropy().mean().item()
 
         # Policy loss with entropy bonus
-        loss_pi = -(torch.min(ratio * adv, clip_adv) + self.coef_ent * ent).mean()
+        loss_pi = -(torch.min(ratio * adv, clip_adv) + self.coef_ent * entropy).mean()
 
         # About KL divergence and clipping fraction
         approx_kl = (logp_old - logp).mean().item()
         clipped = ratio.gt(1 + self.clip_ratio) | ratio.lt(1 - self.clip_ratio)
         clipfrac = torch.as_tensor(clipped, dtype=torch.float32).mean().item()
-        pi_info = dict(kl=approx_kl, ent=ent, cf=clipfrac)
+        pi_info = dict(kl=approx_kl, ent=entropy, cf=clipfrac)
 
         return loss_pi, pi_info
 
@@ -410,7 +411,7 @@ class PPO:
         Update policy and value networks using collected data.
         """
         # Retrieve and normalize training data from the buffer
-        data = self.buf.get()
+        data = self.buffer.get()
 
         # Write logger reward information
         self.logger['mean_rew'] = data['mean_rews'].mean().item()
@@ -418,21 +419,21 @@ class PPO:
 
         # Train policy NN
         for _ in range(self.train_pi_iters):
-            self.pi_optimizer.zero_grad()
+            self.policyNN_optimizer.zero_grad()
             loss_pi, pi_info = self.compute_loss_pi(data)
             kl = pi_info['kl']
             if kl > self.target_kl:
                 # print(f"Early stop at step {i} due to max kl")
                 break
             loss_pi.backward()  # compute grads
-            self.pi_optimizer.step()  # update parameters
+            self.policyNN_optimizer.step()  # update parameters
 
         # Train value function NN
         for _ in range(self.train_vf_iters):
-            self.vf_optimizer.zero_grad()
+            self.valfunNN_optimizer.zero_grad()
             loss_vf = self.compute_loss_vf(data)
             loss_vf.backward()  # compute grads
-            self.vf_optimizer.step()  # update parameters
+            self.valfunNN_optimizer.step()  # update parameters
 
     def rollout(self):
         """
@@ -442,42 +443,42 @@ class PPO:
         - epoch_reward: The total reward collected during the epoch.
         """
         # Reset environment parameters
-        o, ep_ret, ep_len = self.env.reset(), 0, 0
+        obs, episode_return, episode_len = self.env.reset(), 0, 0
         epoch_reward = 0
 
         # Generate training data
         for t in range(self.steps_per_epoch):
             # get action, value function and logprob
-            a, v, logp = self.ac_model.step(torch.as_tensor(o, dtype=torch.float32))
+            action, value, log_prob = self.ac_model.step(torch.as_tensor(obs, dtype=torch.float32))
 
-            next_o, r, d, _ = self.env.step(a)
-            ep_ret += r
-            ep_len += 1
-            epoch_reward += r
+            next_obs, reward, done_flag, _ = self.env.step(action)
+            episode_return += reward
+            episode_len += 1
+            epoch_reward += reward
 
             # Save and log data
-            self.buf.store(o, a, r, v, logp)
+            self.buffer.store(obs, action, reward, value, log_prob)
 
             # Update observation
-            o = copy(next_o)
+            obs = copy(next_obs)
 
-            timeout = ep_len == self.max_ep_len
-            terminal = d or timeout
+            timeout = episode_len == self.max_ep_len
+            terminal = done_flag or timeout
             epoch_ended = t == self.steps_per_epoch - 1
 
             if terminal or epoch_ended:
-                if epoch_ended and not (terminal):
-                    print('Warning: trajectory cut off by epoch at %d steps.' % ep_len, flush=True)
+                if epoch_ended and not terminal:
+                    print('Warning: trajectory cut off by epoch at %d steps.' % episode_len, flush=True)
                 
                 # If not terminal, use bootstrapped value estimate for final state
                 if timeout or epoch_ended:
-                    _, v, _ = self.ac_model.step(torch.as_tensor(o, dtype=torch.float32))
+                    _, value, _ = self.ac_model.step(torch.as_tensor(obs, dtype=torch.float32))
                 else:
-                    v = 0
-                self.buf.finish_path(v)
+                    value = 0
+                self.buffer.finish_path(value)
 
                 # Reset environment parameters
-                o, ep_ret, ep_len = self.env.reset(), 0, 0
+                obs, episode_return, episode_len = self.env.reset(), 0, 0
 
         return epoch_reward
 
@@ -536,8 +537,8 @@ class PPO:
             if (epoch + 1) % self.lr_decay_freq == 0:
                 self.pi_lr *= self.lr_gamma
                 self.vf_lr *= self.lr_gamma
-                self.adjust_lr(self.pi_optimizer, self.pi_lr)
-                self.adjust_lr(self.vf_optimizer, self.vf_lr)
+                self.adjust_lr(self.policyNN_optimizer, self.pi_lr)
+                self.adjust_lr(self.valfunNN_optimizer, self.vf_lr)
                 print("New pi_lr = %f" % self.pi_lr)
                 print("New vf_lr = %f" % self.vf_lr)
 
@@ -548,7 +549,7 @@ class PPO:
         for param_group in optimizer.param_groups:
             param_group['lr'] = new_lr
 
-    def set_hyperparameters(self, hyperparameters):
+    def init_hyperparams(self):
         self.epochs = 8000
         self.steps_per_epoch = 1000
         self.max_ep_len = 1000  # 500
@@ -575,12 +576,12 @@ class PPO:
         self.training_path = './training/walker'
         self.data_filename = 'data'
         self.model_filename = 'ppo_walker_model.pth'
-        self.create_new_training_data = False
-        self.load_model = False
+        # self.create_new_training_data = False
+        # self.load_model = False
 
-        # change default hyperparameters
-        for param, val in hyperparameters.items():
-            exec("self." + param + "=" + "val")
+        # # change default hyperparameters
+        # for param, val in hyperparameters.items():
+        #     exec("self." + param + "=" + "val")
 
 
 class WalkerEnv:
@@ -684,7 +685,7 @@ if __name__ == '__main__':
 
     # Train
     agent = PPO(walker_env)
-    TRAIN_FLAG = True
+    TRAIN_FLAG = False
     RESUME_TRAINING_FLAG = True
     if TRAIN_FLAG:
         if RESUME_TRAINING_FLAG:
@@ -699,21 +700,52 @@ if __name__ == '__main__':
         agent.ac_model.load_state_dict(torch.load('./training/walker/ppo_walker_model.pth'))
         agent.ac_model.eval()
 
-        # Define the policy function for DM Control Viewer
-        def policy(time_step):
+        # Define the policy function for DM Control Viewer (to pick actions)
+        # def policy(time_step):
+        #     if time_step.first():
+        #         action = np.zeros(env.action_spec().shape)
+        #     else:
+        #         observation = walker_env.get_obs_array(time_step.observation)
+        #         obs_tensor = torch.as_tensor(observation, dtype=torch.float32)
+        #         with torch.no_grad():
+        #             action_tensor, _, _ = agent.ac_model.step(obs_tensor)
+        #         # Check if action_tensor is already a NumPy array or a PyTorch tensor
+        #         if isinstance(action_tensor, np.ndarray):
+        #             action = action_tensor
+        #         else:
+        #             action = action_tensor.numpy()  # Convert only if it's a tensor
+        #     return action
+        def choose_action(time_step):
+            """
+            Determines the next action to take based on the given time step.
+
+            If it's the first time step, an array of zeros matching the action shape is returned.
+            Otherwise, it utilizes the agent's policy model to select an action given the current observation.
+
+            Args:
+                time_step: A TimeStep object containing observation data and information about whether it's the first step.
+
+            Returns:
+                np.ndarray: An array representing the selected action.
+            """
             if time_step.first():
+                # Initial action is an array of zeros matching the shape of the environment's action space
                 action = np.zeros(env.action_spec().shape)
             else:
+                # Extract the observation from the time step
                 observation = walker_env.get_obs_array(time_step.observation)
-                obs_tensor = torch.as_tensor(observation, dtype=torch.float32)
+
+                # Convert the observation to a tensor for model processing
+                observation_tensor = torch.tensor(observation, dtype=torch.float32)
+
+                # Predict the action using the policy model
                 with torch.no_grad():
-                    action_tensor, _, _ = agent.ac_model.step(obs_tensor)
-                # Check if action_tensor is already a NumPy array or a PyTorch tensor
-                if isinstance(action_tensor, np.ndarray):
-                    action = action_tensor
-                else:
-                    action = action_tensor.numpy()  # Convert only if it's a tensor
+                    action_tensor, _, _ = agent.ac_model.step(observation_tensor)
+
+                # Ensure the action is in NumPy array format
+                action = action_tensor.numpy() if isinstance(action_tensor, torch.Tensor) else action_tensor
+
             return action
 
         # Launch the viewer
-        viewer.launch(env, policy)
+        viewer.launch(env, choose_action)
