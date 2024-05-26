@@ -13,3 +13,7 @@ Extended Kalman Filter, IMU calibration (commented for autograder), and Unscente
 ## Homework 3
 
 Policy Iteration, SLAM with Particle Filter, Tiny NeRF
+
+## Homework 4
+
+Learning to walk using PPO
