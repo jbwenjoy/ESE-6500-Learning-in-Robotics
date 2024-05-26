@@ -2,6 +2,10 @@
 
 ---
 
+Credit goes to Prof. Pratik Chaudhari
+
+Final grade: A
+
 ## Homework 1
 
 Histogram Filter, Bayes Filter and Hidden Markov Model class
