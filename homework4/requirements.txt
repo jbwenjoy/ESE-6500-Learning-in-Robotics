@@ -1,0 +1,7 @@
+dm_control==1.0.18
+matplotlib==3.7.4
+numpy==1.24.1
+pandas==2.0.3
+scipy==1.14.1
+torch==2.1.2+cu118
+tqdm==4.66.2

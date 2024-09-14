@@ -717,7 +717,7 @@ if __name__ == '__main__':
 
     # Train
     agent = PPO(walker_env)
-    TRAIN_FLAG = True
+    TRAIN_FLAG = False
     RESUME_TRAINING_FLAG = False
     if TRAIN_FLAG:
         if RESUME_TRAINING_FLAG:
