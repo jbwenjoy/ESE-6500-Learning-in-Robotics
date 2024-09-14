@@ -1,4 +1,5 @@
 python_venv/
+__pycache__/
 .tmp.driveupload/
 Other/
 /homework3/p2/data/train/
@@ -6,3 +7,8 @@ Other/
 /github/
 /COLMAP/
 /final_project/
+homework3/p1/.ipynb_checkpoints
+*.png
+*.mp4
+homework3/p3/transforms_colmap.json
+homework2/temp.py

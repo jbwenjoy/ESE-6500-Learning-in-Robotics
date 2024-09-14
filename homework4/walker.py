@@ -1,5 +1,3 @@
-from random import random
-
 from dm_control import suite, viewer
 import numpy as np
 import scipy
@@ -11,11 +9,7 @@ from tqdm import tqdm
 import torch
 import torch.nn as nn
 from torch.optim import Adam
-from torch.distributions import MultivariateNormal
-from torch.distributions.normal import Normal
-import torch.nn.functional as F
 
-import time
 import os
 
 
@@ -26,7 +20,7 @@ import os
 # - ppo_dm_control repo: https://github.com/JhonPool4/ppo_dm_control/blob/master/ppo_utils/policies.py
 
 
-def mlp(sizes, activation, output_activation=nn.Identity):
+def multilayer_perceptron(sizes, activation, output_activation=nn.Identity):
     """
     MLP
 
@@ -82,7 +76,7 @@ class ActorNN(nn.Module):
         self.log_std = torch.nn.Parameter(torch.as_tensor(log_std))
 
         # Create the MLP network to output the mean values of the Gaussian distribution
-        self.mu_net = mlp([obs_dim] + list(hidden_sizes) + [act_dim], activation)
+        self.mu_net = multilayer_perceptron([obs_dim] + list(hidden_sizes) + [act_dim], activation)
 
     def gaussian_distri(self, obs):
         """
@@ -137,7 +131,7 @@ class CriticNN(nn.Module):
 
         # Create an MLP network that outputs a single value representing the estimated value of a state
         # This value network (v_net) will estimate state value for the critic
-        self.v_net = mlp([obs_dim] + list(hidden_sizes) + [1], activation)
+        self.v_net = multilayer_perceptron([obs_dim] + list(hidden_sizes) + [1], activation)
 
     def forward(self, obs):
         """
@@ -226,6 +220,7 @@ class PPOBuffer:
         self.path_start_idx = 0
         self.max_size = size
         self.mean_rews = []
+        self.cross_corr_rewards = []
 
     def store(self, obs, act, rew, val, logp):
         """
@@ -246,6 +241,36 @@ class PPOBuffer:
         self.logp_buf[self.ptr] = logp
         self.ptr += 1
 
+    def compute_cross_correlation_reward(self, path_slice):
+        """
+        After obtaining the default accumulative reward,
+        we also calculate the cross-correlation reward of the angle signals,
+        aiming to make the walker walk symmetrically.
+
+        This function will be called when the episode ends (in finish_path() function).
+        It should read the leg angles data from the entire episode.
+        """
+        # Get the left and right observation data from the buffer
+        left_angles = self.obs_buf[path_slice, 0:3]  # Note sure if it's 0, 1, 2
+        right_angles = self.obs_buf[path_slice, 3:6]  # Also not sure if it's 3, 4, 5
+
+        max_correlations = []
+        norm_factors = []
+        for i in range(3):
+            # Compute cross-correlation at all lags and find the maximum value
+            correlation = np.correlate(left_angles[:, i], right_angles[:, i], mode='full')
+            max_correlation = np.max(correlation)
+            max_correlations.append(max_correlation)
+
+            # Calculate normalization factor from the auto-correlation of both signals
+            norm_factor = np.sqrt(np.max(np.correlate(left_angles[:, i], left_angles[:, i], 'full')) *
+                                  np.max(np.correlate(right_angles[:, i], right_angles[:, i], 'full')))
+            norm_factors.append(norm_factor)
+
+        # Calculate normalized cross-correlation and return the average
+        normalized_correlations = np.array(max_correlations) / np.array(norm_factors)
+        return np.mean(normalized_correlations)
+
     def finish_path(self, last_val=0):
         """
         Finalize trajectory data at the end of an epoch or when the trajectory ends prematurely.
@@ -264,9 +289,7 @@ class PPOBuffer:
         path_slice = slice(self.path_start_idx, self.ptr)
 
         # Add the final reward and value to the trajectory buffers
-        # rews = np.append(self.rew_buf[path_slice], last_val)
         rews = np.concatenate((self.rew_buf[path_slice], [last_val]))
-        # vals = np.append(self.val_buf[path_slice], last_val)
         vals = np.concatenate((self.val_buf[path_slice], [last_val]))
 
         # Update the average rewards for tracking
@@ -278,6 +301,10 @@ class PPOBuffer:
 
         # Compute rewards-to-go, removing the last value to align with the trajectory length
         self.ret_buf[path_slice] = discount_cumsum(rews, self.gamma)[:-1]
+
+        # Compute and add the cross-correlation reward
+        cross_corr_reward = self.compute_cross_correlation_reward(path_slice)
+        self.cross_corr_rewards.append(cross_corr_reward)
 
         # Reset path index for the next trajectory
         self.path_start_idx = self.ptr
@@ -301,10 +328,12 @@ class PPOBuffer:
 
         # Collect all data into a dictionary and convert to Torch tensors
         data = dict(obs=self.obs_buf, act=self.act_buf, ret=self.ret_buf,
-                    adv=self.adv_buf, logp=self.logp_buf, mean_rews=self.mean_rews)
+                    adv=self.adv_buf, logp=self.logp_buf, mean_rews=self.mean_rews,
+                    cross_corr_rewards=self.cross_corr_rewards)
 
-        # Reset mean rews
+        # Reset mean and cross-correlation rewards
         self.mean_rews = []
+        self.cross_corr_rewards = []
 
         # Reset pointers
         self.ptr, self.path_start_idx = 0, 0
@@ -346,14 +375,6 @@ class PPO:
         # Set up the training data file
         self.column_names = ['mean', 'std']
         self.df = pd.DataFrame(columns=self.column_names, dtype=object)
-        # if self.create_new_training_data:
-        #     self.df.to_csv(os.path.join(self.training_path, self.data_filename), mode='w', index=False)
-        #     print(f"new data file created: {self.data_filename}")
-        
-        # # Load the model if specified
-        # if self.load_model:
-        #     self.ac_model.load_state_dict(torch.load(os.path.join(self.training_path, self.model_filename)))
-        #     print(f"model loaded: {self.model_filename}")
 
     def compute_loss_pi(self, data):
         """
@@ -416,6 +437,7 @@ class PPO:
         # Write logger reward information
         self.logger['mean_rew'] = data['mean_rews'].mean().item()
         self.logger['std_rew'] = data['mean_rews'].std().item()
+        self.logger['mean_cross_corr_rew'] = data['cross_corr_rewards'].mean().item()
 
         # Train policy NN
         for _ in range(self.train_pi_iters):
@@ -479,6 +501,9 @@ class PPO:
 
                 # Reset environment parameters
                 obs, episode_return, episode_len = self.env.reset(), 0, 0
+
+        # Return the total reward for the epoch, remember to add the cross-correlation reward
+        epoch_reward += self.cross_corr_coef * self.buffer.cross_corr_rewards[-1]
 
         return epoch_reward
 
@@ -558,6 +583,7 @@ class PPO:
         self.clip_ratio = 0.06
         self.target_kl = 0.01 * 2.5
         self.coef_ent = 0.001
+        self.cross_corr_coef = 10  # weight of the normalized cross-correlation reward, should be large
 
         self.train_pi_iters = 50
         self.train_vf_iters = 50
@@ -575,13 +601,8 @@ class PPO:
 
         self.training_path = './training/walker'
         self.data_filename = 'data'
-        self.model_filename = 'ppo_walker_model.pth'
-        # self.create_new_training_data = False
-        # self.load_model = False
+        self.model_filename = 'ppo_walker_model_cross_corr.pth'
 
-        # # change default hyperparameters
-        # for param, val in hyperparameters.items():
-        #     exec("self." + param + "=" + "val")
 
 
 class WalkerEnv:
@@ -654,6 +675,7 @@ class WalkerEnv:
         obs = self.get_obs_array(self.state.observation)
         reward = self.get_reward(obs)
         done = self.state.last()
+        # print("\robs: ", obs)
         return obs, reward, done, {}
 
 
@@ -671,25 +693,35 @@ if __name__ == '__main__':
     env = suite.load('walker', 'walk', task_kwargs={'random': r0})
     walker_env = WalkerEnv(env)
 
-    # # Retrieve num of dims of observation and input
+    # Retrieve num of dims of observation and input
     U = env.action_spec()
     udim = U.shape[0]
     X = env.observation_spec()
     xdim = 14 + 1 + 9
 
+    # Have a look at the joints
+    obs_spec = env.observation_spec()
+
     # Visualize a random controller
     RANDOM_CTRL_VISUALIZATION_FLAG = False
     if RANDOM_CTRL_VISUALIZATION_FLAG:
-        def u(dt): return np.random.uniform(low=U.minimum, high=U.maximum, size=U.shape)
+        def u(dt):
+            # return np.random.uniform(low=U.minimum, high=U.maximum, size=U.shape)
+            test = np.random.uniform(low=-500, high=500)
+            u_ = np.array([0, 0, 0, test, 0, 0])  # [r_hip, r_knee, r_ankle, l_hip, l_knee, l_ankle]
+            return u_
+        # u = np.zeros(udim)
+        # u[0] = 1
+        # x = np.zeros(xdim)
         viewer.launch(env, policy=u)
 
     # Train
     agent = PPO(walker_env)
-    TRAIN_FLAG = False
-    RESUME_TRAINING_FLAG = True
+    TRAIN_FLAG = True
+    RESUME_TRAINING_FLAG = False
     if TRAIN_FLAG:
         if RESUME_TRAINING_FLAG:
-            agent.ac_model.load_state_dict(torch.load('./training/walker/ppo_walker_model.pth'))
+            agent.ac_model.load_state_dict(torch.load('./training/walker/ppo_walker_model_cross_corr.pth'))
         agent.learn()
 
     #####
@@ -700,21 +732,7 @@ if __name__ == '__main__':
         agent.ac_model.load_state_dict(torch.load('./training/walker/ppo_walker_model.pth'))
         agent.ac_model.eval()
 
-        # Define the policy function for DM Control Viewer (to pick actions)
-        # def policy(time_step):
-        #     if time_step.first():
-        #         action = np.zeros(env.action_spec().shape)
-        #     else:
-        #         observation = walker_env.get_obs_array(time_step.observation)
-        #         obs_tensor = torch.as_tensor(observation, dtype=torch.float32)
-        #         with torch.no_grad():
-        #             action_tensor, _, _ = agent.ac_model.step(obs_tensor)
-        #         # Check if action_tensor is already a NumPy array or a PyTorch tensor
-        #         if isinstance(action_tensor, np.ndarray):
-        #             action = action_tensor
-        #         else:
-        #             action = action_tensor.numpy()  # Convert only if it's a tensor
-        #     return action
+        # Define the action selection function for the viewer
         def choose_action(time_step):
             """
             Determines the next action to take based on the given time step.
