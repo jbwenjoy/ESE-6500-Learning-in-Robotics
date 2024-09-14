@@ -2,6 +2,10 @@
 
 ---
 
+Credit goes to Prof. Pratik Chaudhari
+
+Final grade: A
+
 ## Homework 1
 
 Histogram Filter, Bayes Filter and Hidden Markov Model class
@@ -13,3 +17,7 @@ Extended Kalman Filter, IMU calibration (commented for autograder), and Unscente
 ## Homework 3
 
 Policy Iteration, SLAM with Particle Filter, Tiny NeRF
+
+## Homework 4
+
+Learning to walk using PPO
