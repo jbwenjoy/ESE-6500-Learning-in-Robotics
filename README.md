@@ -1,4 +1,4 @@
-# Portfolio of robot learning algorithms from ESE-6500@UPenn
+# ESE-6500@UPenn
 
 ---
 
@@ -21,3 +21,7 @@ Policy Iteration, SLAM with Particle Filter, Tiny NeRF
 ## Homework 4
 
 Learning to walk using PPO
+
+## Final prj
+
+At https://github.com/Yvonne-OH/-Accident-prone-traffic-scenario-generation
